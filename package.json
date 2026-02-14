@@ -1,0 +1,15 @@
+{
+  "name": "catalyst-wallet",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @catalyst/wallet-web",
+    "build": "npm run build -ws",
+    "test": "npm run test -ws",
+    "lint": "npm run lint -ws"
+  }
+}
+

@@ -1,0 +1,15 @@
+[package]
+name = "catalyst-wallet-rust-ref"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Reference implementation (local path)
+catalyst-core = { path = "../../../catalyst-node-rust/crates/catalyst-core" }
+

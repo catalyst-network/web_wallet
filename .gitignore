@@ -1,0 +1,23 @@
+node_modules
+dist
+.DS_Store
+.vite
+coverage
+
+# Rust build artifacts
+target
+**/target
+
+# Local environment files
+.env
+.env.*
+
+# Local editor/OS noise
+.idea
+.vscode
+*.swp
+
+# npm noise
+npm-debug.log*
+yarn-error.log*
+
