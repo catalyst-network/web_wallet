@@ -98,11 +98,19 @@ export function App() {
   const [onboardPassword, setOnboardPassword] = useState("");
   const [createWords, setCreateWords] = useState<12 | 24>(12);
   const [createMnemonicText, setCreateMnemonicText] = useState<string>(() => createMnemonic(128));
-  const [createConfirmMnemonic, setCreateConfirmMnemonic] = useState("");
+  const [createConfirmIdxs, setCreateConfirmIdxs] = useState<number[]>(() => [1, 6, 12]);
+  const [createConfirmWords, setCreateConfirmWords] = useState<string[]>(() => ["", "", ""]);
   const [restoreMnemonic, setRestoreMnemonic] = useState("");
   const [restorePassphrase, setRestorePassphrase] = useState("");
   const [importPrivkeyHex, setImportPrivkeyHex] = useState<string>(() => randomPrivkeyHex());
   const [onboardError, setOnboardError] = useState<string | null>(null);
+
+  // Backup / export (re-auth)
+  const [revealMode, setRevealMode] = useState<null | "mnemonic" | "private_key">(null);
+  const [revealPassword, setRevealPassword] = useState("");
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [revealedText, setRevealedText] = useState<string | null>(null);
 
   const [chainOk, setChainOk] = useState<boolean | null>(null);
   const [chainError, setChainError] = useState<string | null>(null);
@@ -234,8 +242,19 @@ export function App() {
     setOnboardError(null);
     try {
       if (!onboardPassword) throw new Error("Password is required");
-      if (createConfirmMnemonic.trim() !== createMnemonicText.trim()) throw new Error("Mnemonic confirmation does not match");
       if (!isValidMnemonic(createMnemonicText.trim())) throw new Error("Mnemonic is invalid");
+
+      const words = createMnemonicText.trim().split(/\s+/).map((w) => w.toLowerCase());
+      if (words.length !== (createWords === 12 ? 12 : 24)) throw new Error("Mnemonic word count mismatch");
+      const entered = createConfirmWords.map((w) => w.trim().toLowerCase());
+      if (createConfirmIdxs.length !== 3 || entered.length !== 3) throw new Error("Invalid confirmation state");
+      for (let i = 0; i < 3; i++) {
+        const idx1 = createConfirmIdxs[i]!;
+        const expected = words[idx1 - 1];
+        if (!expected) throw new Error("Invalid confirmation index");
+        if (entered[i] !== expected) throw new Error(`Confirmation failed for word #${idx1}`);
+      }
+
       const wd = createMnemonicWalletV2({
         mnemonic: createMnemonicText.trim(),
         passphrase: "",
@@ -248,6 +267,65 @@ export function App() {
       setOnboardingMode("choose");
     } catch (e) {
       setOnboardError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function pickConfirmIdxs(count: 12 | 24): number[] {
+    // Choose 3 distinct 1-indexed positions.
+    const set = new Set<number>();
+    while (set.size < 3) {
+      const n = 1 + Math.floor(Math.random() * count);
+      set.add(n);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }
+
+  function resetCreateMnemonic(nextWords: 12 | 24) {
+    setCreateWords(nextWords);
+    setCreateMnemonicText(createMnemonic(nextWords === 12 ? 128 : 256));
+    setCreateConfirmIdxs(pickConfirmIdxs(nextWords));
+    setCreateConfirmWords(["", "", ""]);
+  }
+
+  async function revealSecret(mode: "mnemonic" | "private_key") {
+    if (!vault) return;
+    if (!walletData) return;
+    if (!selectedAccountId) return;
+    if (!revealPassword) {
+      setRevealError("Password is required");
+      return;
+    }
+    setRevealBusy(true);
+    setRevealError(null);
+    setRevealedText(null);
+    try {
+      // Re-auth by decrypting the vault again with the provided password.
+      const plaintext = openVaultV1({ password: revealPassword, record: vault });
+      const json = JSON.parse(bytesToUtf8(plaintext)) as unknown;
+      const wd = parseWalletDataAny(json);
+
+      if (mode === "mnemonic") {
+        if (wd.kind !== "mnemonic_v1" || !wd.mnemonic) throw new Error("This wallet does not have a mnemonic");
+        setRevealedText(wd.mnemonic);
+        setRevealMode("mnemonic");
+      } else {
+        const pk = getPrivateKeyHexForAccount(wd, wd.selectedAccountId);
+        setRevealedText(pk);
+        setRevealMode("private_key");
+      }
+      setRevealPassword("");
+    } catch (e) {
+      setRevealError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRevealBusy(false);
+    }
+  }
+
+  async function copyToClipboard(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // ignore
     }
   }
 
@@ -410,7 +488,10 @@ export function App() {
     }
   }
 
-  const faucetEnabled = import.meta.env.DEV && CATALYST_TESTNET.networkId === "catalyst-testnet";
+  const faucetEnabled =
+    import.meta.env.DEV &&
+    (import.meta.env.VITE_ENABLE_DEV_FAUCET === "true") &&
+    CATALYST_TESTNET.networkId === "catalyst-testnet";
   const faucetAddressHex = useMemo(
     () => (faucetEnabled ? pubkeyFromPrivkeyHex(CATALYST_TESTNET_DEV_FAUCET_PRIVKEY_HEX) : null),
     [faucetEnabled],
@@ -648,8 +729,7 @@ export function App() {
                   <button
                     className="secondary"
                     onClick={() => {
-                      setCreateMnemonicText(createMnemonic(createWords === 12 ? 128 : 256));
-                      setCreateConfirmMnemonic("");
+                      resetCreateMnemonic(createWords);
                     }}
                   >
                     Regenerate
@@ -657,10 +737,7 @@ export function App() {
                   <button
                     className="secondary"
                     onClick={() => {
-                      const next = createWords === 12 ? 24 : 12;
-                      setCreateWords(next);
-                      setCreateMnemonicText(createMnemonic(next === 12 ? 128 : 256));
-                      setCreateConfirmMnemonic("");
+                      resetCreateMnemonic(createWords === 12 ? 24 : 12);
                     }}
                   >
                     {createWords === 12 ? "Use 24 words" : "Use 12 words"}
@@ -670,8 +747,27 @@ export function App() {
                 <div className="small">Write these words down (in order). This is your backup.</div>
                 <textarea value={createMnemonicText} readOnly />
                 <div className="spacer" />
-                <div className="small">Confirm by re-entering the full mnemonic.</div>
-                <textarea value={createConfirmMnemonic} onChange={(e) => setCreateConfirmMnemonic(e.target.value)} />
+                <div className="small">Confirm by entering these words (case-insensitive).</div>
+                <div className="row">
+                  <input
+                    value={createConfirmWords[0] ?? ""}
+                    onChange={(e) => setCreateConfirmWords((w) => [e.target.value, w[1] ?? "", w[2] ?? ""])}
+                    placeholder={`Word #${createConfirmIdxs[0] ?? "?"}`}
+                    style={{ flex: 1, minWidth: 180 }}
+                  />
+                  <input
+                    value={createConfirmWords[1] ?? ""}
+                    onChange={(e) => setCreateConfirmWords((w) => [w[0] ?? "", e.target.value, w[2] ?? ""])}
+                    placeholder={`Word #${createConfirmIdxs[1] ?? "?"}`}
+                    style={{ flex: 1, minWidth: 180 }}
+                  />
+                  <input
+                    value={createConfirmWords[2] ?? ""}
+                    onChange={(e) => setCreateConfirmWords((w) => [w[0] ?? "", w[1] ?? "", e.target.value])}
+                    placeholder={`Word #${createConfirmIdxs[2] ?? "?"}`}
+                    style={{ flex: 1, minWidth: 180 }}
+                  />
+                </div>
                 <div className="spacer" />
                 <input
                   type="password"
@@ -798,6 +894,58 @@ export function App() {
             </div>
             {refreshError ? <div className="error">{refreshError}</div> : null}
             {chainError ? <div className="error">{chainError}</div> : null}
+          </div>
+
+          <div className="card">
+            <div style={{ fontWeight: 700 }}>Backup &amp; export</div>
+            <div className="small">Re-enter your password to reveal sensitive material.</div>
+            <div className="spacer" />
+            <input
+              type="password"
+              value={revealPassword}
+              onChange={(e) => setRevealPassword(e.target.value)}
+              placeholder="Password"
+              style={{ width: "100%" }}
+            />
+            <div className="spacer" />
+            <div className="row">
+              {walletData?.kind === "mnemonic_v1" ? (
+                <button className="secondary" disabled={revealBusy} onClick={() => revealSecret("mnemonic")}>
+                  Show mnemonic
+                </button>
+              ) : null}
+              <button className="secondary" disabled={revealBusy} onClick={() => revealSecret("private_key")}>
+                Show private key
+              </button>
+              {revealedText ? (
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setRevealedText(null);
+                    setRevealMode(null);
+                    setRevealError(null);
+                  }}
+                >
+                  Hide
+                </button>
+              ) : null}
+            </div>
+            {revealError ? <div className="error">{revealError}</div> : null}
+            {revealedText ? (
+              <>
+                <div className="spacer" />
+                <textarea value={revealedText} readOnly />
+                <div className="spacer" />
+                <div className="row">
+                  <button className="secondary" onClick={() => copyToClipboard(revealedText)}>
+                    Copy
+                  </button>
+                  <div className="small">
+                    Showing: <span className="v">{revealMode ?? "secret"}</span>
+                  </div>
+                </div>
+              </>
+            ) : null}
           </div>
 
           <div className="card">
