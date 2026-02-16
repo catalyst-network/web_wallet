@@ -106,8 +106,12 @@ function leBytesToBigInt(bytes: Uint8Array): bigint {
 const ORDER = ristretto255.Point.Fn.ORDER;
 
 function hashToScalarBlake2b256(data: Uint8Array): bigint {
-  const h = blake2b(data, { dkLen: 32 });
-  return leBytesToBigInt(h) % ORDER;
+  // IMPORTANT: match Rust `blake2b_hash` implementation:
+  // Blake2b512(data) then take first 32 bytes.
+  // (This is NOT the same as Blake2b with outputLen=32 parameterization.)
+  const h64 = blake2b(data, { dkLen: 64 });
+  const h32 = h64.slice(0, 32);
+  return leBytesToBigInt(h32) % ORDER;
 }
 
 export function signSchnorrRistretto(args: {

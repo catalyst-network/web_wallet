@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CATALYST_TESTNET,
   CatalystRpcClient,
+  CATALYST_TESTNET_DEV_FAUCET_PRIVKEY_HEX,
   assertChainIdentity,
   buildAndSignTransferTxV1,
   normalizeHex32,
@@ -13,6 +14,8 @@ type UiTx = {
   localTxId: `0x${string}`;
   rpcTxId?: `0x${string}`;
   status?: string;
+  lastReceipt?: unknown;
+  lastCheckedAtMs?: number;
   createdAtMs: number;
 };
 
@@ -78,6 +81,7 @@ export function App() {
   const [balance, setBalance] = useState<bigint | null>(null);
   const [nonce, setNonce] = useState<bigint | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [nextNonceHint, setNextNonceHint] = useState<bigint | null>(null);
 
   const [toHex, setToHex] = useState("");
   const [amountStr, setAmountStr] = useState("1");
@@ -85,8 +89,17 @@ export function App() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendOk, setSendOk] = useState<string | null>(null);
   const [txs, setTxs] = useState<UiTx[]>([]);
+  const [sendBusy, setSendBusy] = useState(false);
+
+  const [faucetAmountStr, setFaucetAmountStr] = useState("1000");
+  const [faucetBusy, setFaucetBusy] = useState(false);
+  const [faucetError, setFaucetError] = useState<string | null>(null);
+  const [faucetOk, setFaucetOk] = useState<string | null>(null);
+  const [faucetNextNonceHint, setFaucetNextNonceHint] = useState<bigint | null>(null);
 
   const pollTimer = useRef<number | null>(null);
+  const nextNonceByAddrRef = useRef<Map<string, bigint>>(new Map());
+  const nonceLocksRef = useRef<Map<string, Promise<void>>>(new Map());
 
   useEffect(() => {
     localStorage.setItem(LS_RPC_URL, rpcUrl);
@@ -98,30 +111,29 @@ export function App() {
     setChainError(null);
   }, [rpcUrl]);
 
+  const verifyChain = useCallback(async () => {
+    setChainOk(null);
+    setChainError(null);
+    try {
+      await assertChainIdentity(rpc, CATALYST_TESTNET);
+      setChainOk(true);
+      setChainError(null);
+    } catch (e) {
+      setChainOk(false);
+      setChainError(e instanceof Error ? e.message : String(e));
+    }
+  }, [rpc]);
+
   useEffect(() => {
     if (!privkeyHex) return;
     setAddressHex(pubkeyFromPrivkeyHex(privkeyHex));
   }, [privkeyHex]);
 
   useEffect(() => {
-    if (!addressHex) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        await assertChainIdentity(rpc, CATALYST_TESTNET);
-        if (cancelled) return;
-        setChainOk(true);
-        setChainError(null);
-      } catch (e) {
-        if (cancelled) return;
-        setChainOk(false);
-        setChainError(e instanceof Error ? e.message : String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [rpc, addressHex]);
+    // Try automatically on load / when RPC changes.
+    // (Still allow manual retry via the UI button.)
+    verifyChain().catch(() => {});
+  }, [verifyChain]);
 
   async function unlock() {
     setSendOk(null);
@@ -144,8 +156,44 @@ export function App() {
     setAddressHex(null);
     setBalance(null);
     setNonce(null);
+    setNextNonceHint(null);
     setFee(null);
     setTxs([]);
+  }
+
+  async function allocateNonce(senderHex32: string): Promise<bigint> {
+    // Per-sender queue to ensure sequential allocation even with rapid clicks.
+    const prev = nonceLocksRef.current.get(senderHex32) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((r) => {
+      release = r;
+    });
+    nonceLocksRef.current.set(senderHex32, prev.then(() => next));
+
+    await prev;
+    try {
+      let n = nextNonceByAddrRef.current.get(senderHex32);
+      if (n === undefined) {
+        const committed = await rpc.getNonce(senderHex32);
+        n = committed + 1n;
+      }
+      nextNonceByAddrRef.current.set(senderHex32, n + 1n);
+      if (senderHex32 === addressHex) setNextNonceHint(n + 1n);
+      if (senderHex32 === faucetAddressHex) setFaucetNextNonceHint(n + 1n);
+      return n;
+    } finally {
+      release();
+    }
+  }
+
+  function bumpNextNonceFloor(senderHex32: string, committedNonce: bigint) {
+    const floor = committedNonce + 1n;
+    const cur = nextNonceByAddrRef.current.get(senderHex32);
+    if (cur === undefined || cur < floor) {
+      nextNonceByAddrRef.current.set(senderHex32, floor);
+      if (senderHex32 === addressHex) setNextNonceHint(floor);
+      if (senderHex32 === faucetAddressHex) setFaucetNextNonceHint(floor);
+    }
   }
 
   async function refreshAccount() {
@@ -155,6 +203,7 @@ export function App() {
       const [b, n] = await Promise.all([rpc.getBalance(addressHex), rpc.getNonce(addressHex)]);
       setBalance(b);
       setNonce(n);
+      bumpNextNonceFloor(addressHex, n);
     } catch (e) {
       setRefreshError(e instanceof Error ? e.message : String(e));
     }
@@ -183,30 +232,43 @@ export function App() {
       setSendError("Refusing to sign: chain identity is not verified.");
       return;
     }
+    if (sendBusy) return;
     setSendError(null);
     setSendOk(null);
-
-    const to = normalizeHex32(toHex.trim());
-    const amount = BigInt(amountStr.trim());
-    const currentNonce = nonce ?? (await rpc.getNonce(addressHex));
-    const fees = fee ?? (await rpc.estimateFee({ from: addressHex, to, value: amount.toString(), data: null, gas_limit: null, gas_price: null }));
-
-    const built = buildAndSignTransferTxV1({
-      privkeyHex,
-      toPubkeyHex: to,
-      amount,
-      noncePlusOne: currentNonce + 1n,
-      fees,
-      lockTimeSeconds: nowSecondsU32(),
-      timestampMs: nowMs(),
-      chainId: CATALYST_TESTNET.chainId,
-      genesisHashHex: CATALYST_TESTNET.genesisHashHex,
-    });
-
-    const localTxId = built.txIdHex;
-    setTxs((prev) => [{ localTxId, createdAtMs: Date.now() }, ...prev]);
+    setSendBusy(true);
 
     try {
+      const to = normalizeHex32(toHex.trim());
+      const amount = BigInt(amountStr.trim());
+      const fees =
+        fee ??
+        (await rpc.estimateFee({
+          from: addressHex,
+          to,
+          value: amount.toString(),
+          data: null,
+          gas_limit: null,
+          gas_price: null,
+        }));
+
+      // Allocate a unique nonce for this send (committed_nonce+1, +2, +3, ...)
+      const nonceToUse = await allocateNonce(addressHex);
+
+      const built = buildAndSignTransferTxV1({
+        privkeyHex,
+        toPubkeyHex: to,
+        amount,
+        noncePlusOne: nonceToUse,
+        fees,
+        lockTimeSeconds: nowSecondsU32(),
+        timestampMs: nowMs(),
+        chainId: CATALYST_TESTNET.chainId,
+        genesisHashHex: CATALYST_TESTNET.genesisHashHex,
+      });
+
+      const localTxId = built.txIdHex;
+      setTxs((prev) => [{ localTxId, createdAtMs: Date.now() }, ...prev]);
+
       const rpcTxId = await rpc.sendRawTransaction(built.wireHex);
       setTxs((prev) =>
         prev.map((t) => (t.localTxId === localTxId ? { ...t, rpcTxId, status: "pending" } : t)),
@@ -214,6 +276,99 @@ export function App() {
       setSendOk(`Submitted. tx_id: ${rpcTxId}`);
     } catch (e) {
       setSendError(e instanceof Error ? e.message : String(e));
+      // If we raced on-chain nonce (e.g., other wallet instance), re-floor from RPC next refresh.
+    }
+    finally {
+      setSendBusy(false);
+    }
+  }
+
+  const faucetEnabled = import.meta.env.DEV && CATALYST_TESTNET.networkId === "catalyst-testnet";
+  const faucetAddressHex = useMemo(
+    () => (faucetEnabled ? pubkeyFromPrivkeyHex(CATALYST_TESTNET_DEV_FAUCET_PRIVKEY_HEX) : null),
+    [faucetEnabled],
+  );
+
+  useEffect(() => {
+    // If we know faucet address, precompute its next nonce floor once (cheap) to reduce collisions.
+    if (!faucetAddressHex) return;
+    rpc
+      .getNonce(faucetAddressHex)
+      .then((n) => bumpNextNonceFloor(faucetAddressHex, n))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faucetAddressHex, rpcUrl]);
+
+  async function requestFaucetFunds() {
+    if (!faucetEnabled) return;
+    if (!addressHex) return;
+    if (chainOk !== true) {
+      setFaucetError("Chain identity is not verified.");
+      return;
+    }
+    if (!faucetAddressHex) return;
+
+    setFaucetBusy(true);
+    setFaucetError(null);
+    setFaucetOk(null);
+
+    try {
+      const amount = BigInt(faucetAmountStr.trim());
+      if (amount <= 0n) throw new Error("Amount must be > 0");
+
+      const fees = await rpc.estimateFee({
+        from: faucetAddressHex,
+        to: addressHex,
+        value: amount.toString(10),
+        data: null,
+        gas_limit: null,
+        gas_price: null,
+      });
+
+      // Retry once on potential nonce race.
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          // Faucet is a shared account; still allocate locally to avoid double-sends from this UI.
+          // If another faucet user races us, the retry will pick up a new committed nonce.
+          const committed = await rpc.getNonce(faucetAddressHex);
+          bumpNextNonceFloor(faucetAddressHex, committed);
+          const faucetNonceToUse = await allocateNonce(faucetAddressHex);
+          const built = buildAndSignTransferTxV1({
+            privkeyHex: CATALYST_TESTNET_DEV_FAUCET_PRIVKEY_HEX,
+            toPubkeyHex: addressHex,
+            amount,
+            noncePlusOne: faucetNonceToUse,
+            fees,
+            lockTimeSeconds: nowSecondsU32(),
+            timestampMs: nowMs(),
+            chainId: CATALYST_TESTNET.chainId,
+            genesisHashHex: CATALYST_TESTNET.genesisHashHex,
+          });
+
+          const localTxId = built.txIdHex;
+          setTxs((prev) => [{ localTxId, createdAtMs: Date.now(), status: "pending" }, ...prev]);
+
+          const rpcTxId = await rpc.sendRawTransaction(built.wireHex);
+          setTxs((prev) =>
+            prev.map((t) => (t.localTxId === localTxId ? { ...t, rpcTxId, status: "pending" } : t)),
+          );
+          setFaucetOk(`Faucet transfer submitted. tx_id: ${rpcTxId}`);
+
+          // Refresh after a short delay; receipt polling will continue.
+          setTimeout(() => {
+            refreshAccount().catch(() => {});
+          }, 1500);
+          return;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    } catch (e) {
+      setFaucetError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFaucetBusy(false);
     }
   }
 
@@ -234,9 +389,18 @@ export function App() {
         const id = t.rpcTxId ?? t.localTxId;
         try {
           const r = await rpc.getTransactionReceipt(id);
-          if (r?.status) {
-            setTxs((prev) => prev.map((x) => (x.localTxId === t.localTxId ? { ...x, status: r.status } : x)));
-          }
+          setTxs((prev) =>
+            prev.map((x) =>
+              x.localTxId === t.localTxId
+                ? {
+                    ...x,
+                    status: r?.status ?? "not_found",
+                    lastReceipt: r,
+                    lastCheckedAtMs: Date.now(),
+                  }
+                : x,
+            ),
+          );
         } catch {
           // ignore transient failures
         }
@@ -251,6 +415,30 @@ export function App() {
   const hasVault = !!vault;
   const chainStatus =
     chainOk === null ? "checking…" : chainOk ? "verified" : chainError ? "error" : "mismatch";
+
+  async function checkTxNow(localTxId: `0x${string}`) {
+    const t = txs.find((x) => x.localTxId === localTxId);
+    if (!t) return;
+    const id = t.rpcTxId ?? t.localTxId;
+    try {
+      const r = await rpc.getTransactionReceipt(id);
+      setTxs((prev) =>
+        prev.map((x) =>
+          x.localTxId === localTxId
+            ? { ...x, status: r?.status ?? "not_found", lastReceipt: r, lastCheckedAtMs: Date.now() }
+            : x,
+        ),
+      );
+    } catch (e) {
+      setTxs((prev) =>
+        prev.map((x) =>
+          x.localTxId === localTxId
+            ? { ...x, status: "error", lastReceipt: { error: e instanceof Error ? e.message : String(e) }, lastCheckedAtMs: Date.now() }
+            : x,
+        ),
+      );
+    }
+  }
 
   return (
     <div className="wrap">
@@ -373,11 +561,16 @@ export function App() {
               <div className="v">{balance === null ? "—" : balance.toString(10)}</div>
               <div className="k">Nonce</div>
               <div className="v">{nonce === null ? "—" : nonce.toString(10)}</div>
+              <div className="k">Next nonce</div>
+              <div className="v">{nextNonceHint === null ? "—" : nextNonceHint.toString(10)}</div>
             </div>
             <div className="spacer" />
             <div className="row">
               <button className="secondary" onClick={() => refreshAccount()}>
                 Refresh
+              </button>
+              <button className="secondary" onClick={() => verifyChain()}>
+                Verify chain
               </button>
             </div>
             {refreshError ? <div className="error">{refreshError}</div> : null}
@@ -393,22 +586,67 @@ export function App() {
             <input value={amountStr} onChange={(e) => setAmountStr(e.target.value)} placeholder="Amount (decimal)" style={{ width: "100%" }} />
             <div className="spacer" />
             <div className="row">
-              <button className="secondary" onClick={() => estimateFee().catch((e) => setSendError(e instanceof Error ? e.message : String(e)))}>
+              <button
+                className="secondary"
+                disabled={sendBusy}
+                onClick={() => estimateFee().catch((e) => setSendError(e instanceof Error ? e.message : String(e)))}
+              >
                 Estimate fee
               </button>
               <div className="small">fee: {fee === null ? "—" : fee.toString(10)}</div>
             </div>
             <div className="spacer" />
-            <button onClick={() => send().catch((e) => setSendError(e instanceof Error ? e.message : String(e)))}>
-              Sign &amp; submit
+            <button
+              disabled={sendBusy}
+              onClick={() => send().catch((e) => setSendError(e instanceof Error ? e.message : String(e)))}
+            >
+              {sendBusy ? "Submitting…" : "Sign & submit"}
             </button>
             {sendError ? <div className="error">{sendError}</div> : null}
             {sendOk ? <div className="ok">{sendOk}</div> : null}
           </div>
 
+          {faucetEnabled ? (
+            <div className="card">
+              <div style={{ fontWeight: 700 }}>Get testnet funds (dev-only)</div>
+              <div className="small">
+                Uses a deterministic shared faucet key on <span className="v">catalyst-testnet</span>. Do not ship this in production.
+              </div>
+              <div className="spacer" />
+              <div className="kv">
+                <div className="k">Faucet address</div>
+                <div className="v">{faucetAddressHex ?? "—"}</div>
+              </div>
+              <div className="spacer" />
+              <input
+                value={faucetAmountStr}
+                onChange={(e) => setFaucetAmountStr(e.target.value)}
+                placeholder="Amount (decimal)"
+                style={{ width: "100%" }}
+              />
+              <div className="spacer" />
+              <div className="row">
+                <button onClick={() => requestFaucetFunds()} disabled={faucetBusy || chainOk !== true}>
+                  {faucetBusy ? "Requesting…" : "Request funds"}
+                </button>
+                {chainOk !== true ? (
+                  <button className="secondary" onClick={() => verifyChain()}>
+                    Verify chain
+                  </button>
+                ) : null}
+              </div>
+              {chainOk !== true ? <div className="error">{chainError ?? "Chain identity is not verified yet."}</div> : null}
+              {faucetError ? <div className="error">{faucetError}</div> : null}
+              {faucetOk ? <div className="ok">{faucetOk}</div> : null}
+            </div>
+          ) : null}
+
           <div className="card" style={{ gridColumn: "1 / -1" }}>
             <div style={{ fontWeight: 700 }}>Transactions</div>
-            <div className="small">Receipt polling every ~2.5s.</div>
+            <div className="small">
+              Receipt polling every ~2.5s. Note: <span className="v">pending</span> receipts are often{" "}
+              <span className="v">RPC-node local</span> (another RPC/explorer may not show them until applied).
+            </div>
             <div className="spacer" />
             {txs.length === 0 ? (
               <div className="small">No transactions yet.</div>
@@ -419,7 +657,14 @@ export function App() {
                     <div className="k">tx_id</div>
                     <div className="v">{t.rpcTxId ?? t.localTxId}</div>
                     <div className="k">status</div>
-                    <div className="v">{t.status ?? "—"}</div>
+                    <div className="v">
+                      {t.status ?? "—"}{" "}
+                      <button className="secondary" style={{ padding: "6px 10px", marginLeft: 8 }} onClick={() => checkTxNow(t.localTxId)}>
+                        Check
+                      </button>
+                    </div>
+                    <div className="k">receipt</div>
+                    <div className="v">{t.lastReceipt ? JSON.stringify(t.lastReceipt) : "—"}</div>
                   </div>
                 ))}
               </div>

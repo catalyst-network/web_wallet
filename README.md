@@ -17,6 +17,12 @@ Greenfield wallet implementation for **Catalyst testnet** (`catalyst-testnet`) f
 
 Wallet verifies chain identity at startup and refuses to sign if mismatched.
 
+## Faucet (dev-only)
+
+In dev builds, the web wallet includes a **“Get testnet funds”** button that uses the deterministic testnet faucet key (`fa…fa`) to submit a normal transfer from the faucet account.
+
+**Do not ship this in production** (use a hosted faucet service instead).
+
 ## Dev quickstart
 
 ```bash

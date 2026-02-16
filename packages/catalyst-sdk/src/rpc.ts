@@ -26,6 +26,14 @@ export type RpcTransactionRequest = {
   gas_price: string | null;
 };
 
+export type RpcTxReceipt = {
+  status: "pending" | "selected" | "applied" | "dropped" | string;
+  selected_cycle?: number | null;
+  applied_cycle?: number | null;
+  applied_success?: boolean | null;
+  applied_error?: string | null;
+};
+
 export class CatalystRpcClient {
   private nextId = 1;
 
@@ -83,8 +91,8 @@ export class CatalystRpcClient {
     return txid as `0x${string}`;
   }
 
-  async getTransactionReceipt(txid: string): Promise<null | { status: string }> {
-    return await this.call<null | { status: string }>("catalyst_getTransactionReceipt", [txid]);
+  async getTransactionReceipt(txid: string): Promise<null | RpcTxReceipt> {
+    return await this.call<null | RpcTxReceipt>("catalyst_getTransactionReceipt", [txid]);
   }
 }
 
