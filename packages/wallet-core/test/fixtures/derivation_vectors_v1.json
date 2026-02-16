@@ -1,0 +1,25 @@
+{
+  "note": "Catalyst Wallet v1 derivation vectors (BIP39 -> seed -> BLAKE2b512 KDF).",
+  "version": 1,
+  "vectors": [
+    {
+      "name": "bip39_trezor_vector_1",
+      "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+      "passphrase": "TREZOR",
+      "seed_hex": "0xc55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04",
+      "accounts": [
+        {
+          "account_index": 0,
+          "privkey_hex": "0xe678a081a47e011ed4855c1e4f26a0c106a7f22979c7afd1d4306308ffba2897",
+          "address_hex": "0x6c1ae40f843ef9cf0a47d8589831d2989dd5d9de049227ee9970f074a32bfd78"
+        },
+        {
+          "account_index": 1,
+          "privkey_hex": "0xf7a3272861e3185273f993e304b32c23b670b8516726db811c3ccc3d0b3ec402",
+          "address_hex": "0xdcaefbfd0b53c50b37211cc5aa0f0bf1745f8e00a86f2f17e1d35c549fffb462"
+        }
+      ]
+    }
+  ]
+}
+

@@ -8,7 +8,21 @@ import {
   normalizeHex32,
   pubkeyFromPrivkeyHex,
 } from "@catalyst/catalyst-sdk";
-import { createVaultV1, openVaultV1, type VaultRecordV1, validatePrivateKeyHex } from "@catalyst/wallet-core";
+import {
+  addAccount,
+  createMnemonic,
+  createMnemonicWalletV2,
+  createPrivateKeyWalletV2,
+  createVaultV1,
+  getPrivateKeyHexForAccount,
+  getSelectedAccount,
+  isValidMnemonic,
+  openVaultV1,
+  parseWalletDataAny,
+  selectAccount,
+  type VaultRecordV1,
+  type WalletDataV2,
+} from "@catalyst/wallet-core";
 
 type UiTx = {
   localTxId: `0x${string}`;
@@ -43,6 +57,11 @@ function utf8ToBytes(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
+  // Minimal select styling by reusing existing input styles
+  // (The global CSS already styles inputs/buttons/textarea; we add select below.)
+
+type OnboardingMode = "choose" | "create" | "restore" | "import";
+
 function nowMs(): bigint {
   return BigInt(Date.now());
 }
@@ -66,14 +85,24 @@ export function App() {
 
   const [vault, setVault] = useState<VaultRecordV1 | null>(() => readVault());
   const [locked, setLocked] = useState(true);
+  const [sessionPassword, setSessionPassword] = useState<string | null>(null);
+  const [walletData, setWalletData] = useState<WalletDataV2 | null>(null);
 
   const [password, setPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [importPrivkey, setImportPrivkey] = useState<`0x${string}` | string>("");
-  const [generatedPrivkey, setGeneratedPrivkey] = useState<`0x${string}`>(() => randomPrivkeyHex());
-
-  const [privkeyHex, setPrivkeyHex] = useState<`0x${string}` | null>(null);
   const [addressHex, setAddressHex] = useState<`0x${string}` | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [privkeyHex, setPrivkeyHex] = useState<`0x${string}` | null>(null);
+
+  // Onboarding state (when no vault exists)
+  const [onboardingMode, setOnboardingMode] = useState<OnboardingMode>("choose");
+  const [onboardPassword, setOnboardPassword] = useState("");
+  const [createWords, setCreateWords] = useState<12 | 24>(12);
+  const [createMnemonicText, setCreateMnemonicText] = useState<string>(() => createMnemonic(128));
+  const [createConfirmMnemonic, setCreateConfirmMnemonic] = useState("");
+  const [restoreMnemonic, setRestoreMnemonic] = useState("");
+  const [restorePassphrase, setRestorePassphrase] = useState("");
+  const [importPrivkeyHex, setImportPrivkeyHex] = useState<string>(() => randomPrivkeyHex());
+  const [onboardError, setOnboardError] = useState<string | null>(null);
 
   const [chainOk, setChainOk] = useState<boolean | null>(null);
   const [chainError, setChainError] = useState<string | null>(null);
@@ -125,9 +154,17 @@ export function App() {
   }, [rpc]);
 
   useEffect(() => {
-    if (!privkeyHex) return;
-    setAddressHex(pubkeyFromPrivkeyHex(privkeyHex));
-  }, [privkeyHex]);
+    if (!walletData) return;
+    const acct = getSelectedAccount(walletData);
+    setSelectedAccountId(acct.id);
+    setAddressHex(acct.addressHex);
+    try {
+      setPrivkeyHex(getPrivateKeyHexForAccount(walletData, acct.id));
+    } catch {
+      setPrivkeyHex(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletData]);
 
   useEffect(() => {
     // Try automatically on load / when RPC changes.
@@ -142,23 +179,113 @@ export function App() {
     const v = vault ?? readVault();
     if (!v) throw new Error("No vault found");
     const plaintext = openVaultV1({ password, record: v });
-    const json = JSON.parse(bytesToUtf8(plaintext)) as { privateKeyHex: string };
-    const pk = validatePrivateKeyHex(json.privateKeyHex);
-    setPrivkeyHex(pk);
+    const json = JSON.parse(bytesToUtf8(plaintext)) as unknown;
+    const wd = parseWalletDataAny(json);
+    setWalletData(wd);
     setLocked(false);
+    setSessionPassword(password);
     setPassword("");
     setVault(v);
   }
 
   function lock() {
     setLocked(true);
+    setWalletData(null);
+    setSelectedAccountId(null);
     setPrivkeyHex(null);
     setAddressHex(null);
+    setSessionPassword(null);
     setBalance(null);
     setNonce(null);
     setNextNonceHint(null);
     setFee(null);
     setTxs([]);
+  }
+
+  async function persistWallet(updated: WalletDataV2) {
+    if (!sessionPassword) throw new Error("Wallet is locked");
+    const record = createVaultV1({ password: sessionPassword, plaintext: utf8ToBytes(JSON.stringify(updated)) });
+    writeVault(record);
+    setVault(record);
+    setWalletData(updated);
+  }
+
+  async function switchAccount(accountId: string) {
+    if (!walletData) return;
+    const updated = selectAccount(walletData, accountId);
+    await persistWallet(updated);
+    const acct = getSelectedAccount(updated);
+    setSelectedAccountId(acct.id);
+    setAddressHex(acct.addressHex);
+    setPrivkeyHex(getPrivateKeyHexForAccount(updated, acct.id));
+  }
+
+  async function addNewAccount() {
+    if (!walletData) return;
+    const updated = addAccount(walletData);
+    await persistWallet(updated);
+    const acct = getSelectedAccount(updated);
+    setSelectedAccountId(acct.id);
+    setAddressHex(acct.addressHex);
+    setPrivkeyHex(getPrivateKeyHexForAccount(updated, acct.id));
+  }
+
+  async function completeOnboardingCreate() {
+    setOnboardError(null);
+    try {
+      if (!onboardPassword) throw new Error("Password is required");
+      if (createConfirmMnemonic.trim() !== createMnemonicText.trim()) throw new Error("Mnemonic confirmation does not match");
+      if (!isValidMnemonic(createMnemonicText.trim())) throw new Error("Mnemonic is invalid");
+      const wd = createMnemonicWalletV2({
+        mnemonic: createMnemonicText.trim(),
+        passphrase: "",
+        initialAccounts: 1,
+      });
+      const record = createVaultV1({ password: onboardPassword, plaintext: utf8ToBytes(JSON.stringify(wd)) });
+      writeVault(record);
+      setVault(record);
+      setOnboardPassword("");
+      setOnboardingMode("choose");
+    } catch (e) {
+      setOnboardError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function completeOnboardingRestore() {
+    setOnboardError(null);
+    try {
+      if (!onboardPassword) throw new Error("Password is required");
+      if (!isValidMnemonic(restoreMnemonic.trim())) throw new Error("Mnemonic is invalid");
+      const wd = createMnemonicWalletV2({
+        mnemonic: restoreMnemonic.trim(),
+        passphrase: restorePassphrase,
+        initialAccounts: 1,
+      });
+      const record = createVaultV1({ password: onboardPassword, plaintext: utf8ToBytes(JSON.stringify(wd)) });
+      writeVault(record);
+      setVault(record);
+      setOnboardPassword("");
+      setRestoreMnemonic("");
+      setRestorePassphrase("");
+      setOnboardingMode("choose");
+    } catch (e) {
+      setOnboardError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function completeOnboardingImport() {
+    setOnboardError(null);
+    try {
+      if (!onboardPassword) throw new Error("Password is required");
+      const wd = createPrivateKeyWalletV2({ privateKeyHex: importPrivkeyHex.trim() });
+      const record = createVaultV1({ password: onboardPassword, plaintext: utf8ToBytes(JSON.stringify(wd)) });
+      writeVault(record);
+      setVault(record);
+      setOnboardPassword("");
+      setOnboardingMode("choose");
+    } catch (e) {
+      setOnboardError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function allocateNonce(senderHex32: string): Promise<bigint> {
@@ -490,59 +617,133 @@ export function App() {
                 </button>
               </>
             ) : (
-              <div className="small">No vault found yet. Create one on the right.</div>
+              <div className="small">No vault found yet. Create or restore one on the right.</div>
             )}
             {chainError ? <div className="error">{chainError}</div> : null}
           </div>
 
           <div className="card">
-            <div style={{ fontWeight: 700 }}>Create vault (MVP)</div>
-            <div className="small">Stores a single 32-byte private key encrypted with scrypt + XChaCha20-Poly1305.</div>
+            <div style={{ fontWeight: 700 }}>Get started</div>
+            <div className="small">Create a new mnemonic wallet, restore from mnemonic, or import a private key.</div>
             <div className="spacer" />
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="New password"
-              style={{ width: "100%" }}
-            />
-            <div className="spacer" />
-            <div className="small">Option A: import private key hex (32 bytes, 0x-prefixed).</div>
-            <input
-              value={importPrivkey}
-              onChange={(e) => setImportPrivkey(e.target.value)}
-              placeholder="0x… (64 hex chars)"
-              style={{ width: "100%" }}
-            />
-            <div className="spacer" />
-            <div className="small">Option B: generate a random private key (save it somewhere safe).</div>
-            <textarea value={generatedPrivkey} readOnly />
-            <div className="row">
-              <button className="secondary" onClick={() => setGeneratedPrivkey(randomPrivkeyHex())}>
-                Regenerate
-              </button>
-              <button
-                onClick={() => {
-                  try {
-                    const pk = importPrivkey ? validatePrivateKeyHex(importPrivkey) : validatePrivateKeyHex(generatedPrivkey);
-                    const addr = pubkeyFromPrivkeyHex(pk);
-                    const record = createVaultV1({
-                      password: newPassword,
-                      plaintext: utf8ToBytes(JSON.stringify({ privateKeyHex: pk, addressHex: addr })),
-                    });
-                    writeVault(record);
-                    setVault(record);
-                    setChainError(null);
-                    setNewPassword("");
-                    setImportPrivkey("");
-                  } catch (e) {
-                    setChainError(e instanceof Error ? e.message : String(e));
-                  }
-                }}
-              >
-                Create vault
-              </button>
-            </div>
+
+            {onboardingMode === "choose" ? (
+              <div className="row">
+                <button className="secondary" onClick={() => { setOnboardingMode("create"); setOnboardError(null); }}>
+                  Create wallet
+                </button>
+                <button className="secondary" onClick={() => { setOnboardingMode("restore"); setOnboardError(null); }}>
+                  Restore wallet
+                </button>
+                <button className="secondary" onClick={() => { setOnboardingMode("import"); setOnboardError(null); }}>
+                  Import private key
+                </button>
+              </div>
+            ) : null}
+
+            {onboardingMode === "create" ? (
+              <>
+                <div className="spacer" />
+                <div className="row">
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setCreateMnemonicText(createMnemonic(createWords === 12 ? 128 : 256));
+                      setCreateConfirmMnemonic("");
+                    }}
+                  >
+                    Regenerate
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      const next = createWords === 12 ? 24 : 12;
+                      setCreateWords(next);
+                      setCreateMnemonicText(createMnemonic(next === 12 ? 128 : 256));
+                      setCreateConfirmMnemonic("");
+                    }}
+                  >
+                    {createWords === 12 ? "Use 24 words" : "Use 12 words"}
+                  </button>
+                </div>
+                <div className="spacer" />
+                <div className="small">Write these words down (in order). This is your backup.</div>
+                <textarea value={createMnemonicText} readOnly />
+                <div className="spacer" />
+                <div className="small">Confirm by re-entering the full mnemonic.</div>
+                <textarea value={createConfirmMnemonic} onChange={(e) => setCreateConfirmMnemonic(e.target.value)} />
+                <div className="spacer" />
+                <input
+                  type="password"
+                  value={onboardPassword}
+                  onChange={(e) => setOnboardPassword(e.target.value)}
+                  placeholder="Set a password to encrypt this device vault"
+                  style={{ width: "100%" }}
+                />
+                <div className="spacer" />
+                <div className="row">
+                  <button onClick={() => completeOnboardingCreate()}>Create encrypted vault</button>
+                  <button className="secondary" onClick={() => setOnboardingMode("choose")}>
+                    Back
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {onboardingMode === "restore" ? (
+              <>
+                <div className="spacer" />
+                <div className="small">Enter your mnemonic words to restore.</div>
+                <textarea value={restoreMnemonic} onChange={(e) => setRestoreMnemonic(e.target.value)} placeholder="mnemonic words…" />
+                <div className="spacer" />
+                <input
+                  value={restorePassphrase}
+                  onChange={(e) => setRestorePassphrase(e.target.value)}
+                  placeholder="Optional passphrase (advanced)"
+                  style={{ width: "100%" }}
+                />
+                <div className="spacer" />
+                <input
+                  type="password"
+                  value={onboardPassword}
+                  onChange={(e) => setOnboardPassword(e.target.value)}
+                  placeholder="Set a password to encrypt this device vault"
+                  style={{ width: "100%" }}
+                />
+                <div className="spacer" />
+                <div className="row">
+                  <button onClick={() => completeOnboardingRestore()}>Restore encrypted vault</button>
+                  <button className="secondary" onClick={() => setOnboardingMode("choose")}>
+                    Back
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {onboardingMode === "import" ? (
+              <>
+                <div className="spacer" />
+                <div className="small">Import a raw 32-byte private key (hex).</div>
+                <input value={importPrivkeyHex} onChange={(e) => setImportPrivkeyHex(e.target.value)} style={{ width: "100%" }} />
+                <div className="spacer" />
+                <input
+                  type="password"
+                  value={onboardPassword}
+                  onChange={(e) => setOnboardPassword(e.target.value)}
+                  placeholder="Set a password to encrypt this device vault"
+                  style={{ width: "100%" }}
+                />
+                <div className="spacer" />
+                <div className="row">
+                  <button onClick={() => completeOnboardingImport()}>Import encrypted vault</button>
+                  <button className="secondary" onClick={() => setOnboardingMode("choose")}>
+                    Back
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {onboardError ? <div className="error">{onboardError}</div> : null}
           </div>
         </div>
       ) : (
@@ -553,6 +754,23 @@ export function App() {
             <div className="kv">
               <div className="k">Address</div>
               <div className="v">{addressHex}</div>
+              <div className="k">Account</div>
+              <div className="v">
+                {walletData ? (
+                  <select
+                    value={selectedAccountId ?? getSelectedAccount(walletData).id}
+                    onChange={(e) => switchAccount(e.target.value).catch((err) => setRefreshError(err instanceof Error ? err.message : String(err)))}
+                  >
+                    {walletData.accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  "—"
+                )}
+              </div>
               <div className="k">Chain identity</div>
               <div className="v">
                 {chainStatus}
@@ -572,6 +790,11 @@ export function App() {
               <button className="secondary" onClick={() => verifyChain()}>
                 Verify chain
               </button>
+              {walletData?.kind === "mnemonic_v1" ? (
+                <button className="secondary" onClick={() => addNewAccount().catch((err) => setRefreshError(err instanceof Error ? err.message : String(err)))}>
+                  Add account
+                </button>
+              ) : null}
             </div>
             {refreshError ? <div className="error">{refreshError}</div> : null}
             {chainError ? <div className="error">{chainError}</div> : null}

@@ -9,12 +9,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@catalyst/catalyst-sdk": "0.0.0",
     "@noble/ciphers": "^2.0.1",
-    "@noble/hashes": "^2.0.1"
+    "@noble/hashes": "^2.0.1",
+    "@scure/bip39": "^2.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
