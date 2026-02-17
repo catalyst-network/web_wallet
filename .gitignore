@@ -21,3 +21,6 @@ target
 npm-debug.log*
 yarn-error.log*
 
+# Vite cache (sometimes nested)
+**/.vite
+

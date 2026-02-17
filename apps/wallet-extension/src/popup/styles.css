@@ -1,0 +1,123 @@
+:root {
+  color-scheme: light;
+  --bg: #0b1020;
+  --panel: rgba(255, 255, 255, 0.06);
+  --text: rgba(255, 255, 255, 0.92);
+  --muted: rgba(255, 255, 255, 0.72);
+  --border: rgba(255, 255, 255, 0.12);
+  --danger: #ff4d4d;
+  --ok: #2ad67a;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}
+
+body {
+  margin: 0;
+  min-width: 380px;
+  background: radial-gradient(900px 500px at 30% 20%, rgba(124, 92, 255, 0.25), transparent 60%),
+    radial-gradient(700px 450px at 70% 40%, rgba(42, 214, 122, 0.14), transparent 60%),
+    var(--bg);
+  color: var(--text);
+}
+
+.wrap {
+  padding: 14px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.title {
+  font-size: 16px;
+  font-weight: 700;
+}
+.subtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 6px 10px;
+  align-items: start;
+}
+.k {
+  color: var(--muted);
+  font-size: 12px;
+}
+.v {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+input,
+button,
+textarea,
+select {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+}
+button {
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(124, 92, 255, 0.25), rgba(124, 92, 255, 0.1));
+}
+button.secondary {
+  background: rgba(255, 255, 255, 0.06);
+}
+button.danger {
+  background: linear-gradient(180deg, rgba(255, 77, 77, 0.25), rgba(255, 77, 77, 0.1));
+}
+.error {
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 8px;
+}
+.ok {
+  color: var(--ok);
+  font-size: 12px;
+  margin-top: 8px;
+}
+.small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.spacer {
+  height: 10px;
+}
+
