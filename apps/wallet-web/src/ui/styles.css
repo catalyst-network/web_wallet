@@ -141,6 +141,33 @@ button.danger {
   color: var(--muted);
 }
 
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.pill.sent {
+  background: rgba(255, 77, 77, 0.12);
+  border-color: rgba(255, 77, 77, 0.35);
+}
+.pill.received {
+  background: rgba(42, 214, 122, 0.12);
+  border-color: rgba(42, 214, 122, 0.35);
+}
+.pill.other {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.miniBtn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 .spacer {
   height: 10px;
 }

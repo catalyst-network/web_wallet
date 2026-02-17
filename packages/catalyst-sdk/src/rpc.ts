@@ -34,6 +34,13 @@ export type RpcTxReceipt = {
   applied_error?: string | null;
 };
 
+export type RpcTransactionSummary = {
+  hash: `0x${string}`;
+  from: `0x${string}` | string;
+  to: (`0x${string}` | string) | null;
+  value: string;
+};
+
 export class CatalystRpcClient {
   private nextId = 1;
 
@@ -93,6 +100,19 @@ export class CatalystRpcClient {
 
   async getTransactionReceipt(txid: string): Promise<null | RpcTxReceipt> {
     return await this.call<null | RpcTxReceipt>("catalyst_getTransactionReceipt", [txid]);
+  }
+
+  async getTransactionsByAddress(args: {
+    addressHex32: string;
+    fromCycle?: number | null;
+    limit: number;
+  }): Promise<RpcTransactionSummary[]> {
+    const fromCycle = args.fromCycle ?? null;
+    return await this.call<RpcTransactionSummary[]>("catalyst_getTransactionsByAddress", [
+      args.addressHex32,
+      fromCycle,
+      args.limit,
+    ]);
   }
 }
 

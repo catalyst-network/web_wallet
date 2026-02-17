@@ -62,6 +62,11 @@ function utf8ToBytes(s: string): Uint8Array {
 
 type OnboardingMode = "choose" | "create" | "restore" | "import";
 
+function shortHex(hex: string, left = 10, right = 8): string {
+  if (!hex || hex.length <= left + right + 1) return hex;
+  return `${hex.slice(0, left)}…${hex.slice(-right)}`;
+}
+
 function nowMs(): bigint {
   return BigInt(Date.now());
 }
@@ -111,6 +116,10 @@ export function App() {
   const [revealBusy, setRevealBusy] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
   const [revealedText, setRevealedText] = useState<string | null>(null);
+  const [revealAck, setRevealAck] = useState(false);
+  const [revealCooldownUntilMs, setRevealCooldownUntilMs] = useState(0);
+  const [revealFailures, setRevealFailures] = useState(0);
+  const revealHideTimerRef = useRef<number | null>(null);
 
   const [chainOk, setChainOk] = useState<boolean | null>(null);
   const [chainError, setChainError] = useState<string | null>(null);
@@ -127,6 +136,9 @@ export function App() {
   const [sendOk, setSendOk] = useState<string | null>(null);
   const [txs, setTxs] = useState<UiTx[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
+  const [history, setHistory] = useState<import("@catalyst/catalyst-sdk").RpcTransactionSummary[]>([]);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const [faucetAmountStr, setFaucetAmountStr] = useState("1000");
   const [faucetBusy, setFaucetBusy] = useState(false);
@@ -291,6 +303,16 @@ export function App() {
     if (!vault) return;
     if (!walletData) return;
     if (!selectedAccountId) return;
+    if (!revealAck) {
+      setRevealError("Please confirm you understand the risks before revealing secrets.");
+      return;
+    }
+    const now = Date.now();
+    if (now < revealCooldownUntilMs) {
+      const secs = Math.ceil((revealCooldownUntilMs - now) / 1000);
+      setRevealError(`Too many failed attempts. Try again in ${secs}s.`);
+      return;
+    }
     if (!revealPassword) {
       setRevealError("Password is required");
       return;
@@ -314,8 +336,21 @@ export function App() {
         setRevealMode("private_key");
       }
       setRevealPassword("");
+      setRevealFailures(0);
+      setRevealCooldownUntilMs(0);
+
+      // Auto-hide after 30s.
+      if (revealHideTimerRef.current) window.clearTimeout(revealHideTimerRef.current);
+      revealHideTimerRef.current = window.setTimeout(() => {
+        setRevealedText(null);
+        setRevealMode(null);
+      }, 30_000);
     } catch (e) {
       setRevealError(e instanceof Error ? e.message : String(e));
+      const nextFailures = revealFailures + 1;
+      setRevealFailures(nextFailures);
+      const delayMs = Math.min(60_000, 1000 * 2 ** Math.min(6, nextFailures)); // 2s..64s capped
+      setRevealCooldownUntilMs(Date.now() + delayMs);
     } finally {
       setRevealBusy(false);
     }
@@ -327,6 +362,80 @@ export function App() {
     } catch {
       // ignore
     }
+  }
+
+  async function refreshHistory() {
+    if (!addressHex) return;
+    setHistoryBusy(true);
+    setHistoryError(null);
+    try {
+      const list = await rpc.getTransactionsByAddress({ addressHex32: addressHex, fromCycle: null, limit: 25 });
+      setHistory(list);
+    } catch (e) {
+      setHistoryError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  function renderHistoryItem(h: import("@catalyst/catalyst-sdk").RpcTransactionSummary) {
+    const me = (addressHex ?? "").toLowerCase();
+    const from = (h.from ?? "").toString();
+    const to = h.to ?? null;
+    const fromLc = from.toLowerCase();
+    const toLc = (to ?? "").toString().toLowerCase();
+
+    let direction: "sent" | "received" | "other" = "other";
+    let counterparty: string | null = null;
+    if (me && fromLc === me) {
+      direction = "sent";
+      counterparty = to;
+    } else if (me && toLc === me) {
+      direction = "received";
+      counterparty = from;
+    }
+
+    let signedValue = h.value;
+    try {
+      const v = BigInt(h.value);
+      if (direction === "sent") signedValue = `-${v.toString(10)}`;
+      if (direction === "received") signedValue = `+${v.toString(10)}`;
+    } catch {
+      // keep as string
+    }
+
+    return (
+      <div
+        key={h.hash}
+        className="kv"
+        style={{ gridTemplateColumns: "100px 1fr", padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <div className="k">type</div>
+        <div className="row">
+          <span className={`pill ${direction}`}>{direction}</span>
+          <span className="small">value</span>
+          <span className="v">{signedValue}</span>
+        </div>
+
+        <div className="k">with</div>
+        <div className="row">
+          <span className="v" title={counterparty ?? ""}>{counterparty ? shortHex(counterparty) : "—"}</span>
+          {counterparty ? (
+            <button className="secondary miniBtn" onClick={() => copyToClipboard(counterparty!)}>
+              Copy
+            </button>
+          ) : null}
+        </div>
+
+        <div className="k">hash</div>
+        <div className="row">
+          <span className="v" title={h.hash}>{shortHex(h.hash, 14, 10)}</span>
+          <button className="secondary miniBtn" onClick={() => copyToClipboard(h.hash)}>
+            Copy
+          </button>
+        </div>
+      </div>
+    );
   }
 
   async function completeOnboardingRestore() {
@@ -420,6 +529,7 @@ export function App() {
     setSendOk(null);
     const to = normalizeHex32(toHex.trim());
     const amount = BigInt(amountStr.trim());
+    if (amount <= 0n) throw new Error("Amount must be > 0");
     const f = await rpc.estimateFee({
       from: addressHex,
       to,
@@ -445,6 +555,7 @@ export function App() {
     try {
       const to = normalizeHex32(toHex.trim());
       const amount = BigInt(amountStr.trim());
+      if (amount <= 0n) throw new Error("Amount must be > 0");
       const fees =
         fee ??
         (await rpc.estimateFee({
@@ -455,6 +566,16 @@ export function App() {
           gas_limit: null,
           gas_price: null,
         }));
+
+      // Preflight: if you don't have enough funds, the tx may sit pending and never apply.
+      // If sending to self, the net transfer is 0 and only fees matter.
+      const bal = balance ?? (await rpc.getBalance(addressHex));
+      const required = to === addressHex ? fees : amount + fees;
+      if (bal < required) {
+        throw new Error(
+          `Insufficient balance: have=${bal.toString(10)} need=${required.toString(10)} (includes fees)`,
+        );
+      }
 
       // Allocate a unique nonce for this send (committed_nonce+1, +2, +3, ...)
       const nonceToUse = await allocateNonce(addressHex);
@@ -583,6 +704,7 @@ export function App() {
   useEffect(() => {
     if (!locked && addressHex) {
       refreshAccount().catch(() => {});
+      refreshHistory().catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locked, addressHex]);
@@ -597,6 +719,7 @@ export function App() {
         const id = t.rpcTxId ?? t.localTxId;
         try {
           const r = await rpc.getTransactionReceipt(id);
+          const becameApplied = t.status !== "applied" && r?.status === "applied";
           setTxs((prev) =>
             prev.map((x) =>
               x.localTxId === t.localTxId
@@ -609,6 +732,10 @@ export function App() {
                 : x,
             ),
           );
+          if (becameApplied) {
+            refreshAccount().catch(() => {});
+            refreshHistory().catch(() => {});
+          }
         } catch {
           // ignore transient failures
         }
@@ -900,6 +1027,11 @@ export function App() {
             <div style={{ fontWeight: 700 }}>Backup &amp; export</div>
             <div className="small">Re-enter your password to reveal sensitive material.</div>
             <div className="spacer" />
+            <label className="small" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <input type="checkbox" checked={revealAck} onChange={(e) => setRevealAck(e.target.checked)} />
+              I understand that anyone who sees this can take my funds.
+            </label>
+            <div className="spacer" />
             <input
               type="password"
               value={revealPassword}
@@ -921,6 +1053,7 @@ export function App() {
                 <button
                   className="secondary"
                   onClick={() => {
+                    if (revealHideTimerRef.current) window.clearTimeout(revealHideTimerRef.current);
                     setRevealedText(null);
                     setRevealMode(null);
                     setRevealError(null);
@@ -1019,6 +1152,24 @@ export function App() {
               <span className="v">RPC-node local</span> (another RPC/explorer may not show them until applied).
             </div>
             <div className="spacer" />
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div className="small">Recent on-chain activity (by address)</div>
+              <button className="secondary" onClick={() => refreshHistory()} disabled={historyBusy}>
+                {historyBusy ? "Loading…" : "Refresh history"}
+              </button>
+            </div>
+            {historyError ? <div className="error">{historyError}</div> : null}
+            <div className="card" style={{ marginTop: 10, padding: "10px 14px" }}>
+              {history.length > 0 ? (
+                <div>
+                  {history.slice(0, 10).map((h) => renderHistoryItem(h))}
+                </div>
+              ) : (
+                <div className="small">
+                  {historyBusy ? "Loading…" : "No recent activity found yet."}
+                </div>
+              )}
+            </div>
             {txs.length === 0 ? (
               <div className="small">No transactions yet.</div>
             ) : (
@@ -1030,7 +1181,7 @@ export function App() {
                     <div className="k">status</div>
                     <div className="v">
                       {t.status ?? "—"}{" "}
-                      <button className="secondary" style={{ padding: "6px 10px", marginLeft: 8 }} onClick={() => checkTxNow(t.localTxId)}>
+                      <button className="secondary miniBtn" style={{ marginLeft: 8 }} onClick={() => checkTxNow(t.localTxId)}>
                         Check
                       </button>
                     </div>
