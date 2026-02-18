@@ -7,11 +7,11 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // Same-origin RPC proxy to bypass CORS in dev.
-      // Use `VITE_RPC_TARGET=http://127.0.0.1:8545 npm run dev` to point at an SSH tunnel.
+      // Use `VITE_RPC_TARGET=https://testnet-eu-rpc.catalystnet.org npm run dev` to override.
       "/rpc": {
-        target: process.env.VITE_RPC_TARGET ?? "http://45.32.177.248:8545",
+        target: process.env.VITE_RPC_TARGET ?? "https://testnet-eu-rpc.catalystnet.org",
         changeOrigin: true,
-        secure: false,
+        secure: true,
         rewrite: (path) => path.replace(/^\/rpc/, "/"),
       },
     },

@@ -13,7 +13,10 @@ Greenfield wallet implementation for **Catalyst testnet** (`catalyst-testnet`) f
 - `network_id`: `catalyst-testnet`
 - `chain_id`: `200820092` (`0xbf8457c`)
 - `genesis_hash`: `0xeea16848e6b1d39d6b7a5e094ad9189d5382a6a4b19fb95342ef9846258fee5a`
-- `RPC_URL`: `http://45.32.177.248:8545`
+- `RPC_URL` (default EU + failover):
+  - `https://testnet-eu-rpc.catalystnet.org`
+  - `https://testnet-us-rpc.catalystnet.org`
+  - `https://testnet-asia-rpc.catalystnet.org`
 
 Wallet verifies chain identity at startup and refuses to sign if mismatched.
 
@@ -38,13 +41,13 @@ npm run dev
 
 ### If the remote RPC blocks browsers (CORS/IP allowlist)
 
-Use the SSH tunnel described in the handoff doc:
+Use the dev server’s same-origin RPC proxy:
 
 ```bash
-ssh -N -L 8545:127.0.0.1:8545 root@45.32.177.248
+VITE_RPC_TARGET=https://testnet-eu-rpc.catalystnet.org npm run dev
 ```
 
-Then set the wallet’s RPC URL to `http://127.0.0.1:8545`.
+Then set the wallet’s RPC URL to `"/rpc"` in the UI.
 
 ## Tests
 
