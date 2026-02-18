@@ -35,6 +35,17 @@ class RpcHttpError extends Error {
   }
 }
 
+export class RpcTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RpcTimeoutError";
+  }
+}
+
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
 export type RpcTransactionRequest = {
   from: string;
   to: string;
@@ -93,7 +104,8 @@ export class CatalystRpcClient {
   }
 
   private shouldFailover(err: unknown): boolean {
-    if (err instanceof DOMException && err.name === "AbortError") return true; // timeout
+    if (err instanceof RpcTimeoutError) return true;
+    if (err instanceof DOMException && err.name === "AbortError") return true; // timeout (fallback)
     if (err instanceof RpcHttpError) {
       // Retry on upstream/network style failures; don't retry client mistakes.
       return err.status >= 500 || err.status === 408 || err.status === 429;
@@ -106,14 +118,22 @@ export class CatalystRpcClient {
 
   private async fetchRpc<T>(url: string, req: JsonRpcRequest, timeoutMs: number): Promise<T> {
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), timeoutMs);
+    const t = setTimeout(() => ac.abort(new RpcTimeoutError(`RPC timeout after ${timeoutMs}ms`)), timeoutMs);
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(req),
-        signal: ac.signal,
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(req),
+          signal: ac.signal,
+        });
+      } catch (e) {
+        // Chromium sometimes reports timeouts as AbortError messages like:
+        // "signal is aborted without reason"
+        if (isAbortError(e)) throw new RpcTimeoutError(`RPC timeout after ${timeoutMs}ms`);
+        throw e;
+      }
       if (!res.ok) throw new RpcHttpError(`RPC HTTP ${res.status}`, res.status);
       const json = (await res.json()) as JsonRpcResponse<T>;
       if ("error" in json) throw new Error(`RPC ${json.error.code}: ${json.error.message}`);

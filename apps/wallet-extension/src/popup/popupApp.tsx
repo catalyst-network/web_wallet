@@ -3,6 +3,7 @@ import {
   CATALYST_TESTNET,
   CatalystRpcClient,
   assertChainIdentity,
+  RpcTimeoutError,
   buildAndSignTransferTxV1,
   normalizeHex32,
 } from "@catalyst/catalyst-sdk";
@@ -402,8 +403,9 @@ export function PopupApp() {
             ),
           );
           if (r?.status === "applied") refreshAccount().catch(() => {});
-        } catch {
-          // ignore
+        } catch (e) {
+          // Ignore timeouts; polling will retry and may fail over.
+          if (e instanceof RpcTimeoutError) return;
         }
       }
     }, 2500);

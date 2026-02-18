@@ -4,6 +4,7 @@ import {
   CatalystRpcClient,
   CATALYST_TESTNET_DEV_FAUCET_PRIVKEY_HEX,
   assertChainIdentity,
+  RpcTimeoutError,
   buildAndSignTransferTxV1,
   normalizeHex32,
   pubkeyFromPrivkeyHex,
@@ -386,6 +387,8 @@ export function App() {
       const list = await rpc.getTransactionsByAddress({ addressHex32: addressHex, fromCycle: null, limit: 25 });
       setHistory(list);
     } catch (e) {
+      // Timeouts can happen under load; ignore to keep polling calm.
+      if (e instanceof RpcTimeoutError) return;
       setHistoryError(e instanceof Error ? e.message : String(e));
     } finally {
       setHistoryBusy(false);
@@ -777,6 +780,8 @@ export function App() {
         ),
       );
     } catch (e) {
+      // Ignore timeouts; polling will retry and may fail over.
+      if (e instanceof RpcTimeoutError) return;
       setTxs((prev) =>
         prev.map((x) =>
           x.localTxId === localTxId
