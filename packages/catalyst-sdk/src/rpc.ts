@@ -17,6 +17,24 @@ export type CatalystSyncInfo = {
   genesis_hash: string;
 };
 
+type RpcClientOptions = {
+  /**
+   * Default per-request timeout.
+   * Used for all RPCs unless overridden per call.
+   */
+  timeoutMs?: number;
+};
+
+class RpcHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "RpcHttpError";
+  }
+}
+
 export type RpcTransactionRequest = {
   from: string;
   to: string;
@@ -43,25 +61,97 @@ export type RpcTransactionSummary = {
 
 export class CatalystRpcClient {
   private nextId = 1;
+  private lastGoodIndex = 0;
+  private readonly urls: string[];
+  private readonly timeoutMs: number;
 
-  constructor(public readonly rpcUrl: string) {}
+  constructor(rpcUrlOrUrls: string | string[], opts: RpcClientOptions = {}) {
+    this.urls = (Array.isArray(rpcUrlOrUrls) ? rpcUrlOrUrls : [rpcUrlOrUrls])
+      .map((u) => u.trim())
+      .filter(Boolean);
+    if (this.urls.length === 0) throw new Error("RPC URL(s) required");
+    this.timeoutMs = opts.timeoutMs ?? 10_000;
+  }
 
-  async call<T>(method: string, params?: unknown[]): Promise<T> {
+  /** Primary (preferred) RPC URL. */
+  get rpcUrl(): string {
+    return this.urls[0]!;
+  }
+
+  /** Ordered list of RPC URLs used for failover. */
+  get rpcUrls(): readonly string[] {
+    return this.urls;
+  }
+
+  private orderedIndexesForAttempt(): number[] {
+    const n = this.urls.length;
+    const start = Math.max(0, Math.min(n - 1, this.lastGoodIndex));
+    const idxs: number[] = [];
+    for (let i = start; i < n; i++) idxs.push(i);
+    for (let i = 0; i < start; i++) idxs.push(i);
+    return idxs;
+  }
+
+  private shouldFailover(err: unknown): boolean {
+    if (err instanceof DOMException && err.name === "AbortError") return true; // timeout
+    if (err instanceof RpcHttpError) {
+      // Retry on upstream/network style failures; don't retry client mistakes.
+      return err.status >= 500 || err.status === 408 || err.status === 429;
+    }
+    // Fetch throws TypeError on network errors in browsers.
+    if (err instanceof TypeError) return true;
+    // Be conservative: don't failover on explicit RPC errors (method errors, signature invalid, etc).
+    return false;
+  }
+
+  private async fetchRpc<T>(url: string, req: JsonRpcRequest, timeoutMs: number): Promise<T> {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(req),
+        signal: ac.signal,
+      });
+      if (!res.ok) throw new RpcHttpError(`RPC HTTP ${res.status}`, res.status);
+      const json = (await res.json()) as JsonRpcResponse<T>;
+      if ("error" in json) throw new Error(`RPC ${json.error.code}: ${json.error.message}`);
+      return json.result;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async call<T>(
+    method: string,
+    params?: unknown[],
+    opts?: { timeoutMs?: number; allowFailover?: boolean },
+  ): Promise<T> {
     const req: JsonRpcRequest = {
       jsonrpc: "2.0",
       id: this.nextId++,
       method,
       params,
     };
-    const res = await fetch(this.rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
-    const json = (await res.json()) as JsonRpcResponse<T>;
-    if ("error" in json) throw new Error(`RPC ${json.error.code}: ${json.error.message}`);
-    return json.result;
+    const timeoutMs = opts?.timeoutMs ?? this.timeoutMs;
+    const allowFailover = opts?.allowFailover ?? true;
+
+    let lastErr: unknown = null;
+    const idxs = allowFailover ? this.orderedIndexesForAttempt() : [this.lastGoodIndex];
+    for (const idx of idxs) {
+      const url = this.urls[idx]!;
+      try {
+        const out = await this.fetchRpc<T>(url, req, timeoutMs);
+        this.lastGoodIndex = idx;
+        return out;
+      } catch (e) {
+        lastErr = e;
+        if (!allowFailover || !this.shouldFailover(e)) break;
+        // try next endpoint
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
   async getSyncInfo(): Promise<CatalystSyncInfo> {
@@ -94,7 +184,10 @@ export class CatalystRpcClient {
   }
 
   async sendRawTransaction(wireHex: string): Promise<`0x${string}`> {
-    const txid = await this.call<string>("catalyst_sendRawTransaction", [wireHex]);
+    // Allow longer timeout for broadcasts.
+    const txid = await this.call<string>("catalyst_sendRawTransaction", [wireHex], {
+      timeoutMs: Math.max(this.timeoutMs, 20_000),
+    });
     return txid as `0x${string}`;
   }
 

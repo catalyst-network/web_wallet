@@ -84,9 +84,17 @@ function randomPrivkeyHex(): `0x${string}` {
 }
 
 export function App() {
-  // Default to same-origin dev proxy to avoid browser CORS issues.
-  const [rpcUrl, setRpcUrl] = useState(() => localStorage.getItem(LS_RPC_URL) ?? "/rpc");
-  const rpc = useMemo(() => new CatalystRpcClient(rpcUrl), [rpcUrl]);
+  // Default to HTTPS RPC (EU). In dev, you can set this to "/rpc" to use the Vite proxy.
+  const [rpcBaseUrl, setRpcBaseUrl] = useState(
+    () => localStorage.getItem(LS_RPC_URL) ?? CATALYST_TESTNET.rpcUrls[0]!,
+  );
+  const rpcUrls = useMemo(() => {
+    const base = rpcBaseUrl.trim();
+    if (!base) return [...CATALYST_TESTNET.rpcUrls];
+    if (base.startsWith("/")) return [base];
+    return [base, ...CATALYST_TESTNET.rpcUrls.filter((u) => u !== base)];
+  }, [rpcBaseUrl]);
+  const rpc = useMemo(() => new CatalystRpcClient(rpcUrls), [rpcUrls.join("|")]);
 
   const [vault, setVault] = useState<VaultRecordV1 | null>(() => readVault());
   const [locked, setLocked] = useState(true);
@@ -151,14 +159,14 @@ export function App() {
   const nonceLocksRef = useRef<Map<string, Promise<void>>>(new Map());
 
   useEffect(() => {
-    localStorage.setItem(LS_RPC_URL, rpcUrl);
-  }, [rpcUrl]);
+    localStorage.setItem(LS_RPC_URL, rpcBaseUrl);
+  }, [rpcBaseUrl]);
 
   useEffect(() => {
     // reset chain state on rpc changes
     setChainOk(null);
     setChainError(null);
-  }, [rpcUrl]);
+  }, [rpcBaseUrl]);
 
   const verifyChain = useCallback(async () => {
     setChainOk(null);
@@ -172,6 +180,12 @@ export function App() {
       setChainError(e instanceof Error ? e.message : String(e));
     }
   }, [rpc]);
+
+  async function ensureChainIdentityOk(): Promise<void> {
+    await assertChainIdentity(rpc, CATALYST_TESTNET);
+    setChainOk(true);
+    setChainError(null);
+  }
 
   useEffect(() => {
     if (!walletData) return;
@@ -543,16 +557,15 @@ export function App() {
 
   async function send() {
     if (!privkeyHex || !addressHex) return;
-    if (chainOk !== true) {
-      setSendError("Refusing to sign: chain identity is not verified.");
-      return;
-    }
     if (sendBusy) return;
     setSendError(null);
     setSendOk(null);
     setSendBusy(true);
 
     try {
+      // Enforce identity check immediately before signing/broadcasting.
+      await ensureChainIdentityOk();
+
       const to = normalizeHex32(toHex.trim());
       const amount = BigInt(amountStr.trim());
       if (amount <= 0n) throw new Error("Amount must be > 0");
@@ -626,15 +639,11 @@ export function App() {
       .then((n) => bumpNextNonceFloor(faucetAddressHex, n))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [faucetAddressHex, rpcUrl]);
+  }, [faucetAddressHex, rpcBaseUrl]);
 
   async function requestFaucetFunds() {
     if (!faucetEnabled) return;
     if (!addressHex) return;
-    if (chainOk !== true) {
-      setFaucetError("Chain identity is not verified.");
-      return;
-    }
     if (!faucetAddressHex) return;
 
     setFaucetBusy(true);
@@ -642,6 +651,9 @@ export function App() {
     setFaucetOk(null);
 
     try {
+      // Enforce identity check immediately before signing/broadcasting.
+      await ensureChainIdentityOk();
+
       const amount = BigInt(faucetAmountStr.trim());
       if (amount <= 0n) throw new Error("Amount must be > 0");
 
@@ -788,9 +800,9 @@ export function App() {
         <div className="row">
           <input
             style={{ width: 340 }}
-            value={rpcUrl}
-            onChange={(e) => setRpcUrl(e.target.value)}
-            placeholder='RPC URL (try "/rpc")'
+            value={rpcBaseUrl}
+            onChange={(e) => setRpcBaseUrl(e.target.value)}
+            placeholder='RPC URL (e.g. https://testnet-eu-rpc.catalystnet.org or "/rpc" in dev)'
           />
           {!locked ? (
             <button className="danger" onClick={lock}>

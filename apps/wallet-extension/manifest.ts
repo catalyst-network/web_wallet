@@ -15,7 +15,11 @@ export default {
   },
   permissions: ["storage"],
   host_permissions: [
-    "http://45.32.177.248:8545/*",
+    "https://testnet-eu-rpc.catalystnet.org/*",
+    "https://testnet-us-rpc.catalystnet.org/*",
+    "https://testnet-asia-rpc.catalystnet.org/*",
+
+    // Local tunnel / dev RPC (optional)
     "http://127.0.0.1:8545/*",
     "http://localhost:8545/*",
     "http://[::1]:8545/*",

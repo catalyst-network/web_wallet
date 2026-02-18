@@ -68,8 +68,14 @@ export function PopupApp() {
   const [sessionPassword, setSessionPassword] = useState<string | null>(null);
   const [walletData, setWalletData] = useState<WalletDataV2 | null>(null);
 
-  const [rpcUrl, setRpcUrl] = useState<string>(CATALYST_TESTNET.rpcUrl);
-  const rpc = useMemo(() => new CatalystRpcClient(rpcUrl), [rpcUrl]);
+  const [rpcBaseUrl, setRpcBaseUrl] = useState<string>(CATALYST_TESTNET.rpcUrls[0]!);
+  const rpcUrls = useMemo(() => {
+    const base = rpcBaseUrl.trim();
+    if (!base) return [...CATALYST_TESTNET.rpcUrls];
+    if (base.startsWith("/")) return [base];
+    return [base, ...CATALYST_TESTNET.rpcUrls.filter((u) => u !== base)];
+  }, [rpcBaseUrl]);
+  const rpc = useMemo(() => new CatalystRpcClient(rpcUrls), [rpcUrls.join("|")]);
 
   // Onboarding
   const [onboardingMode, setOnboardingMode] = useState<OnboardingMode>("choose");
@@ -131,13 +137,13 @@ export function PopupApp() {
       const v = await storageGet<VaultRecordV1>(STORAGE_VAULT_KEY);
       setVault(v);
       const url = await storageGet<string>(STORAGE_RPC_URL_KEY);
-      if (url) setRpcUrl(url);
+      if (url) setRpcBaseUrl(url);
     })().catch(() => {});
   }, []);
 
   useEffect(() => {
-    storageSet(STORAGE_RPC_URL_KEY, rpcUrl).catch(() => {});
-  }, [rpcUrl]);
+    storageSet(STORAGE_RPC_URL_KEY, rpcBaseUrl).catch(() => {});
+  }, [rpcBaseUrl]);
 
   useEffect(() => {
     verifyChain().catch(() => {});
@@ -251,15 +257,16 @@ export function PopupApp() {
 
   async function send() {
     if (!privkeyHex || !addressHex) return;
-    if (chainOk !== true) {
-      setSendError("Refusing to sign: chain identity is not verified.");
-      return;
-    }
     if (sendBusy) return;
     setSendError(null);
     setSendOk(null);
     setSendBusy(true);
     try {
+      // Enforce identity check immediately before signing/broadcasting.
+      await assertChainIdentity(rpc, CATALYST_TESTNET);
+      setChainOk(true);
+      setChainError(null);
+
       const to = normalizeHex32(toHex.trim());
       const amount = BigInt(amountStr.trim());
       if (amount <= 0n) throw new Error("Amount must be > 0");
@@ -425,7 +432,12 @@ export function PopupApp() {
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div className="small">RPC URL</div>
-          <input value={rpcUrl} onChange={(e) => setRpcUrl(e.target.value)} style={{ width: 260 }} />
+          <input
+            value={rpcBaseUrl}
+            onChange={(e) => setRpcBaseUrl(e.target.value)}
+            style={{ width: 260 }}
+            placeholder={CATALYST_TESTNET.rpcUrls[0]}
+          />
         </div>
       </div>
 
