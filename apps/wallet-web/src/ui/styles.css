@@ -37,6 +37,16 @@ a {
   justify-content: space-between;
   margin-bottom: 16px;
 }
+.brand {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.brandLogo {
+  color: var(--text);
+  opacity: 0.95;
+  flex: 0 0 auto;
+}
 
 .title {
   font-size: 20px;

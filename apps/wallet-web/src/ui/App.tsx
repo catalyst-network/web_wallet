@@ -24,6 +24,7 @@ import {
   type VaultRecordV1,
   type WalletDataV2,
 } from "@catalyst/wallet-core";
+import { CatalystLogo } from "./CatalystLogo.js";
 
 type UiTx = {
   localTxId: `0x${string}`;
@@ -795,11 +796,14 @@ export function App() {
   return (
     <div className="wrap">
       <div className="header">
-        <div>
-          <div className="title">Catalyst Wallet</div>
-          <div className="subtitle">
-            Network: <span className="v">{CATALYST_TESTNET.networkId}</span> · chain_id{" "}
-            <span className="v">{CATALYST_TESTNET.chainId.toString()}</span>
+        <div className="brand">
+          <CatalystLogo height={22} className="brandLogo" />
+          <div>
+            <div className="title">Catalyst Wallet</div>
+            <div className="subtitle">
+              Network: <span className="v">{CATALYST_TESTNET.networkId}</span> · chain_id{" "}
+              <span className="v">{CATALYST_TESTNET.chainId.toString()}</span>
+            </div>
           </div>
         </div>
         <div className="row">
