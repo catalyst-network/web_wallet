@@ -14,13 +14,17 @@ body {
   margin: 0;
   min-width: 380px;
   background: radial-gradient(900px 500px at 30% 20%, rgba(124, 92, 255, 0.25), transparent 60%),
-    radial-gradient(700px 450px at 70% 40%, rgba(42, 214, 122, 0.14), transparent 60%),
+    radial-gradient(700px 450px at 70% 40%, rgba(22, 172, 159, 0.14), transparent 60%),
     var(--bg);
   color: var(--text);
 }
 
 .wrap {
   padding: 14px;
+}
+.wrap.fullPage {
+  max-width: 980px;
+  margin: 18px auto;
 }
 
 .header {
@@ -29,6 +33,28 @@ body {
   align-items: baseline;
   gap: 10px;
   margin-bottom: 10px;
+}
+.brand {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.brandText {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+.brandText .title {
+  line-height: 1.15;
+}
+.brandLogo {
+  color: var(--text);
+  opacity: 0.95;
+  flex: 0 0 auto;
+  display: block;
+  /* Trim internal whitespace in the SVG wordmark box. */
+  clip-path: inset(0 6% 0 0);
 }
 .title {
   font-size: 16px;
@@ -119,5 +145,19 @@ button.danger {
 }
 .spacer {
   height: 10px;
+}
+
+.qrWrap {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 14px;
+  padding: 12px;
+}
+.qrImg {
+  width: 220px;
+  height: 220px;
+  border-radius: 10px;
 }
 

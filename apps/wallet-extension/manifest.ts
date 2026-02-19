@@ -9,6 +9,10 @@ export default {
     default_title: "Catalyst Wallet",
     default_popup: "index.html",
   },
+  options_ui: {
+    page: "full.html",
+    open_in_tab: true,
+  },
   background: {
     service_worker: "src/background.ts",
     type: "module",
