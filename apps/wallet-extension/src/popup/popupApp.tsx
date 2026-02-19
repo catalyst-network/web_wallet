@@ -450,7 +450,7 @@ export function PopupApp() {
         <div className="brand">
           <CatalystLogo height={20} className="brandLogo" />
           <div>
-            <div className="title">Catalyst Wallet</div>
+            <div className="title">Wallet</div>
             <div className="subtitle">
               Extension · <span className="v">{CATALYST_TESTNET.networkId}</span>
             </div>
