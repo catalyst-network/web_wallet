@@ -13,12 +13,14 @@
   "dependencies": {
     "@catalyst/catalyst-sdk": "0.0.0",
     "@catalyst/wallet-core": "0.0.0",
+    "qrcode": "^1.5.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.1.0",
     "@types/chrome": "^0.0.316",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "^19.1.9",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.2",

@@ -7,6 +7,8 @@ import {
   buildAndSignTransferTxV1,
   normalizeHex32,
 } from "@catalyst/catalyst-sdk";
+import QRCode from "qrcode";
+import { CatalystLogo } from "../ui/CatalystLogo.js";
 import {
   addAccount,
   createMnemonic,
@@ -55,6 +57,14 @@ function shortHex(hex: string, left = 10, right = 8): string {
   return `${hex.slice(0, left)}…${hex.slice(-right)}`;
 }
 
+async function copyText(s: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(s);
+  } catch {
+    // ignore (clipboard may be blocked); UX still offers manual selection
+  }
+}
+
 async function storageGet<T>(key: string): Promise<T | null> {
   const r = await chrome.storage.local.get(key);
   return (r[key] as T | undefined) ?? null;
@@ -64,6 +74,7 @@ async function storageSet(key: string, value: unknown): Promise<void> {
 }
 
 export function PopupApp() {
+  const isFullPage = typeof window !== "undefined" && window.location.pathname.endsWith("full.html");
   const [vault, setVault] = useState<VaultRecordV1 | null>(null);
   const [locked, setLocked] = useState(true);
   const [sessionPassword, setSessionPassword] = useState<string | null>(null);
@@ -104,6 +115,10 @@ export function PopupApp() {
   const [balance, setBalance] = useState<bigint | null>(null);
   const [nonce, setNonce] = useState<bigint | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  // Receive QR
+  const [receiveQrDataUrl, setReceiveQrDataUrl] = useState<string | null>(null);
+  const [receiveQrError, setReceiveQrError] = useState<string | null>(null);
 
   // Sending
   const [toHex, setToHex] = useState("");
@@ -162,6 +177,18 @@ export function PopupApp() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletData]);
+
+  useEffect(() => {
+    if (!addressHex) {
+      setReceiveQrDataUrl(null);
+      setReceiveQrError(null);
+      return;
+    }
+    setReceiveQrError(null);
+    QRCode.toDataURL(addressHex, { margin: 1, width: 320, errorCorrectionLevel: "M" })
+      .then((url) => setReceiveQrDataUrl(url))
+      .catch((e) => setReceiveQrError(e instanceof Error ? e.message : String(e)));
+  }, [addressHex]);
 
   async function persistWallet(updated: WalletDataV2) {
     if (!sessionPassword) throw new Error("Locked");
@@ -418,17 +445,27 @@ export function PopupApp() {
   const chainStatus = chainOk === null ? "checking…" : chainOk ? "verified" : chainError ? "error" : "mismatch";
 
   return (
-    <div className="wrap">
+    <div className={`wrap${isFullPage ? " fullPage" : ""}`}>
       <div className="header">
-        <div>
-          <div className="title">Catalyst Wallet</div>
-          <div className="subtitle">
-            Extension · <span className="v">{CATALYST_TESTNET.networkId}</span>
+        <div className="brand">
+          <CatalystLogo height={20} className="brandLogo" />
+          <div>
+            <div className="title">Catalyst Wallet</div>
+            <div className="subtitle">
+              Extension · <span className="v">{CATALYST_TESTNET.networkId}</span>
+            </div>
           </div>
         </div>
-        <button className="danger" onClick={lock} disabled={locked}>
-          Lock
-        </button>
+        <div className="row" style={{ justifyContent: "flex-end" }}>
+          {!isFullPage ? (
+            <button className="secondary" onClick={() => chrome.runtime.openOptionsPage()}>
+              Open
+            </button>
+          ) : null}
+          <button className="danger" onClick={lock} disabled={locked}>
+            Lock
+          </button>
+        </div>
       </div>
 
       <div className="card">
@@ -578,6 +615,35 @@ export function PopupApp() {
             ) : null}
             {refreshError ? <div className="error">{refreshError}</div> : null}
             {chainError ? <div className="error">{chainError}</div> : null}
+          </div>
+
+          <div className="card">
+            <div style={{ fontWeight: 700 }}>Receive</div>
+            <div className="small">Scan to pay this address.</div>
+            <div className="spacer" />
+            {addressHex ? (
+              <>
+                <div className="qrWrap">
+                  {receiveQrDataUrl ? (
+                    <img className="qrImg" src={receiveQrDataUrl} alt="Receive address QR code" />
+                  ) : (
+                    <div className="small">Generating QR…</div>
+                  )}
+                </div>
+                <div className="spacer" />
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <div className="v" style={{ maxWidth: 520 }}>
+                    {shortHex(addressHex, 18, 12)}
+                  </div>
+                  <button className="secondary" onClick={() => copyText(addressHex)}>
+                    Copy
+                  </button>
+                </div>
+                {receiveQrError ? <div className="error">{receiveQrError}</div> : null}
+              </>
+            ) : (
+              <div className="small">Unlock to view your receive QR.</div>
+            )}
           </div>
 
           <div className="card">
