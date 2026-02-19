@@ -798,7 +798,7 @@ export function App() {
       <div className="header">
         <div className="brand">
           <CatalystLogo height={22} className="brandLogo" />
-          <div>
+          <div className="brandText">
             <div className="title">Wallet</div>
             <div className="subtitle">
               Network: <span className="v">{CATALYST_TESTNET.networkId}</span> · chain_id{" "}

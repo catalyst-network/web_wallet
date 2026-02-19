@@ -14,7 +14,7 @@ body {
   margin: 0;
   min-width: 380px;
   background: radial-gradient(900px 500px at 30% 20%, rgba(124, 92, 255, 0.25), transparent 60%),
-    radial-gradient(700px 450px at 70% 40%, rgba(42, 214, 122, 0.14), transparent 60%),
+    radial-gradient(700px 450px at 70% 40%, rgba(22, 172, 159, 0.14), transparent 60%),
     var(--bg);
   color: var(--text);
 }
@@ -38,6 +38,15 @@ body {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+.brandText {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+.brandText .title {
+  line-height: 1.15;
 }
 .brandLogo {
   color: var(--text);
