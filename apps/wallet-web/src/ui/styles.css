@@ -39,7 +39,7 @@ a {
 }
 .brand {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
 }
 .brandText {
@@ -55,6 +55,9 @@ a {
   color: var(--text);
   opacity: 0.95;
   flex: 0 0 auto;
+  display: block;
+  /* Trim internal whitespace in the SVG wordmark box. */
+  clip-path: inset(0 6% 0 0);
 }
 
 .title {
