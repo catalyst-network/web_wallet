@@ -14,10 +14,28 @@
 
 body {
   margin: 0;
+  position: relative;
   background: radial-gradient(1200px 700px at 30% 20%, rgba(124, 92, 255, 0.25), transparent 60%),
     radial-gradient(900px 600px at 70% 40%, rgba(22, 172, 159, 0.14), transparent 60%),
     var(--bg);
   color: var(--text);
+}
+
+/* Subtle dithering to prevent gradient banding on some displays/GPUs. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
 }
 
 a {
