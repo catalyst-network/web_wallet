@@ -132,6 +132,17 @@ export function PopupApp() {
   const [receiveQrDataUrl, setReceiveQrDataUrl] = useState<string | null>(null);
   const [receiveQrError, setReceiveQrError] = useState<string | null>(null);
 
+  // Backup / export (re-auth)
+  const [revealMode, setRevealMode] = useState<null | "mnemonic" | "private_key">(null);
+  const [revealPassword, setRevealPassword] = useState("");
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [revealedText, setRevealedText] = useState<string | null>(null);
+  const [revealAck, setRevealAck] = useState(false);
+  const [revealCooldownUntilMs, setRevealCooldownUntilMs] = useState(0);
+  const [revealFailures, setRevealFailures] = useState(0);
+  const revealHideTimerRef = useRef<number | null>(null);
+
   // Sending
   const [toHex, setToHex] = useState("");
   const [amountStr, setAmountStr] = useState("1");
@@ -190,6 +201,22 @@ export function PopupApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletData]);
 
+  useEffect(() => {
+    // Reset any revealed secrets when changing lock state.
+    if (locked) {
+      setRevealMode(null);
+      setRevealPassword("");
+      setRevealedText(null);
+      setRevealAck(false);
+      setRevealBusy(false);
+      setRevealError(null);
+      setRevealFailures(0);
+      setRevealCooldownUntilMs(0);
+      if (revealHideTimerRef.current) window.clearTimeout(revealHideTimerRef.current);
+      revealHideTimerRef.current = null;
+    }
+  }, [locked]);
+
   const txsStorageKey = useMemo(() => {
     if (!addressHex) return null;
     return `${STORAGE_TXS_PREFIX}:${CATALYST_TESTNET.networkId}:${addressHex.toLowerCase()}`;
@@ -233,6 +260,54 @@ export function PopupApp() {
       .then((url) => setReceiveQrDataUrl(url))
       .catch((e) => setReceiveQrError(e instanceof Error ? e.message : String(e)));
   }, [addressHex]);
+
+  async function revealSecret(mode: "mnemonic" | "private_key") {
+    if (!vault) throw new Error("No vault");
+    if (!walletData) throw new Error("Locked");
+    if (!revealAck) throw new Error("Please acknowledge the safety warning.");
+    if (!revealPassword) throw new Error("Password is required.");
+    if (Date.now() < revealCooldownUntilMs) {
+      const remaining = Math.ceil((revealCooldownUntilMs - Date.now()) / 1000);
+      throw new Error(`Try again in ${remaining}s.`);
+    }
+
+    setRevealBusy(true);
+    setRevealError(null);
+    try {
+      const plaintext = openVaultV1({ password: revealPassword, record: vault });
+      const json = JSON.parse(bytesToUtf8(plaintext)) as unknown;
+      const wd = parseWalletDataAny(json);
+
+      let out: string | null = null;
+      if (mode === "mnemonic") {
+        out = wd.mnemonic ?? null;
+        if (!out) throw new Error("No mnemonic stored for this wallet.");
+      } else {
+        const acctId = selectedAccountId ?? getSelectedAccount(wd).id;
+        out = getPrivateKeyHexForAccount(wd, acctId);
+        if (!out) throw new Error("Unable to derive private key for selected account.");
+      }
+
+      setRevealMode(mode);
+      setRevealedText(out);
+      setRevealFailures(0);
+      setRevealCooldownUntilMs(0);
+
+      if (revealHideTimerRef.current) window.clearTimeout(revealHideTimerRef.current);
+      revealHideTimerRef.current = window.setTimeout(() => {
+        setRevealedText(null);
+        setRevealMode(null);
+      }, 30_000);
+    } catch (e) {
+      setRevealError(e instanceof Error ? e.message : String(e));
+      const nextFailures = revealFailures + 1;
+      setRevealFailures(nextFailures);
+      const delayMs = Math.min(60_000, 1000 * 2 ** Math.min(6, nextFailures)); // 2s..64s capped
+      setRevealCooldownUntilMs(Date.now() + delayMs);
+    } finally {
+      setRevealBusy(false);
+    }
+  }
 
   async function persistWallet(updated: WalletDataV2) {
     if (!sessionPassword) throw new Error("Locked");
@@ -659,6 +734,69 @@ export function PopupApp() {
             ) : null}
             {refreshError ? <div className="error">{refreshError}</div> : null}
             {chainError ? <div className="error">{chainError}</div> : null}
+          </div>
+
+          <div className="card">
+            <div style={{ fontWeight: 700 }}>Backup &amp; export</div>
+            <div className="small">Re-enter your password to reveal sensitive material.</div>
+            <div className="spacer" />
+
+            <label className="row" style={{ gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={revealAck}
+                onChange={(e) => setRevealAck(e.target.checked)}
+              />
+              <span className="small">I understand that anyone who sees this can take my funds.</span>
+            </label>
+
+            <div className="spacer" />
+
+            <input
+              type="password"
+              value={revealPassword}
+              onChange={(e) => setRevealPassword(e.target.value)}
+              placeholder="Password"
+              style={{ width: "100%" }}
+              disabled={revealBusy}
+            />
+
+            <div className="spacer" />
+
+            <div className="row">
+              {walletData?.kind === "mnemonic_v1" ? (
+                <button
+                  className="secondary"
+                  disabled={revealBusy}
+                  onClick={() => revealSecret("mnemonic").catch((e) => setRevealError(String(e)))}
+                >
+                  Show mnemonic
+                </button>
+              ) : null}
+              <button
+                className="secondary"
+                disabled={revealBusy}
+                onClick={() => revealSecret("private_key").catch((e) => setRevealError(String(e)))}
+              >
+                Show private key
+              </button>
+            </div>
+
+            {revealError ? <div className="error">{revealError}</div> : null}
+
+            {revealedText ? (
+              <>
+                <div className="spacer" />
+                <textarea value={revealedText} readOnly />
+                <div className="spacer" />
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <div className="small">Auto-hides in ~30s.</div>
+                  <button className="secondary miniBtn" onClick={() => copyText(revealedText)}>
+                    Copy
+                  </button>
+                </div>
+              </>
+            ) : null}
           </div>
 
           <div className="card">
