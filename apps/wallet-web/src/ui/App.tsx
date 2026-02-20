@@ -131,6 +131,7 @@ export function App() {
   const [walletData, setWalletData] = useState<WalletDataV2 | null>(null);
 
   const [password, setPassword] = useState("");
+  const unlockBtnRef = useRef<HTMLButtonElement | null>(null);
   const [addressHex, setAddressHex] = useState<`0x${string}` | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [privkeyHex, setPrivkeyHex] = useState<`0x${string}` | null>(null);
@@ -890,7 +891,7 @@ export function App() {
         </div>
         <div className="row">
           <input
-            style={{ width: 340 }}
+            style={{ width: "min(520px, 55vw)", flex: 1, minWidth: 220 }}
             value={rpcBaseUrl}
             onChange={(e) => setRpcBaseUrl(e.target.value)}
             placeholder='RPC URL (e.g. https://testnet-eu-rpc.catalystnet.org or "/rpc" in dev)'
@@ -919,11 +920,18 @@ export function App() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Tab" && !e.shiftKey) {
+                      e.preventDefault();
+                      unlockBtnRef.current?.focus();
+                    }
+                  }}
                   placeholder="Password"
                   style={{ width: "100%" }}
                 />
                 <div className="spacer" />
                 <button
+                  ref={unlockBtnRef}
                   onClick={() =>
                     unlock().catch((e) => setChainError(e instanceof Error ? e.message : String(e)))
                   }
@@ -1155,7 +1163,7 @@ export function App() {
               value={revealPassword}
               onChange={(e) => setRevealPassword(e.target.value)}
               placeholder="Password"
-              style={{ width: "100%" }}
+              style={{ width: "100%", maxWidth: 420 }}
             />
             <div className="spacer" />
             <div className="row">
