@@ -86,9 +86,11 @@ function randomPrivkeyHex(): `0x${string}` {
 }
 
 export function App() {
-  // Default to HTTPS RPC (EU). In dev, you can set this to "/rpc" to use the Vite proxy.
+  // Default to same-origin "/rpc" in dev (avoids CORS), HTTPS in production.
   const [rpcBaseUrl, setRpcBaseUrl] = useState(
-    () => localStorage.getItem(LS_RPC_URL) ?? CATALYST_TESTNET.rpcUrls[0]!,
+    () =>
+      localStorage.getItem(LS_RPC_URL) ??
+      (import.meta.env.DEV ? "/rpc" : CATALYST_TESTNET.rpcUrls[0]!),
   );
   const rpcUrls = useMemo(() => {
     const base = rpcBaseUrl.trim();
@@ -179,7 +181,14 @@ export function App() {
       setChainError(null);
     } catch (e) {
       setChainOk(false);
-      setChainError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === "Failed to fetch" && import.meta.env.DEV) {
+        setChainError(
+          `Cannot reach RPC from the browser (likely CORS). In dev, set RPC URL to "/rpc" and run with VITE_RPC_TARGET=${CATALYST_TESTNET.rpcUrls[0]}`,
+        );
+      } else {
+        setChainError(msg);
+      }
     }
   }, [rpc]);
 
@@ -841,14 +850,29 @@ export function App() {
                   style={{ width: "100%" }}
                 />
                 <div className="spacer" />
-                <button onClick={() => unlock().catch((e) => setChainError(e instanceof Error ? e.message : String(e)))}>
+                <button
+                  onClick={() =>
+                    unlock().catch((e) => setChainError(e instanceof Error ? e.message : String(e)))
+                  }
+                >
                   Unlock
                 </button>
               </>
             ) : (
               <div className="small">No vault found yet. Create or restore one on the right.</div>
             )}
-            {chainError ? <div className="error">{chainError}</div> : null}
+            {chainError ? (
+              <div className="error">
+                {chainError === "Failed to fetch" ? (
+                  <>
+                    Cannot reach RPC from the browser (likely CORS). In dev, set RPC URL to{" "}
+                    <span className="v">/rpc</span>.
+                  </>
+                ) : (
+                  chainError
+                )}
+              </div>
+            ) : null}
           </div>
 
           <div className="card">
