@@ -38,6 +38,15 @@ type UiTx = {
 
 const STORAGE_VAULT_KEY = "catalyst_wallet_vault_v1";
 const STORAGE_RPC_URL_KEY = "catalyst_wallet_rpc_url";
+const STORAGE_TXS_PREFIX = "catalyst_wallet_txs_v1";
+
+const EXPLORER_BASE_URL = "https://explorer.catalystnet.org";
+function explorerTxUrl(txid: string): string {
+  return `${EXPLORER_BASE_URL}/tx/${txid}`;
+}
+function explorerBlockUrl(cycle: number): string {
+  return `${EXPLORER_BASE_URL}/block/${cycle}`;
+}
 
 function bytesToUtf8(b: Uint8Array): string {
   return new TextDecoder().decode(b);
@@ -71,6 +80,9 @@ async function storageGet<T>(key: string): Promise<T | null> {
 }
 async function storageSet(key: string, value: unknown): Promise<void> {
   await chrome.storage.local.set({ [key]: value });
+}
+async function storageRemove(key: string): Promise<void> {
+  await chrome.storage.local.remove(key);
 }
 
 export function PopupApp() {
@@ -177,6 +189,38 @@ export function PopupApp() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletData]);
+
+  const txsStorageKey = useMemo(() => {
+    if (!addressHex) return null;
+    return `${STORAGE_TXS_PREFIX}:${CATALYST_TESTNET.networkId}:${addressHex.toLowerCase()}`;
+  }, [addressHex]);
+
+  useEffect(() => {
+    if (!addressHex || !txsStorageKey) return;
+    (async () => {
+      const stx = await storageGet<UiTx[]>(txsStorageKey);
+      if (Array.isArray(stx)) setTxs(stx);
+    })().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addressHex]);
+
+  useEffect(() => {
+    if (!txsStorageKey) return;
+    storageSet(txsStorageKey, txs.slice(0, 50)).catch(() => {});
+  }, [txs, txsStorageKey]);
+
+  async function wipeLocalHistory() {
+    if (!txsStorageKey) return;
+    await storageRemove(txsStorageKey);
+    setTxs([]);
+  }
+
+  function openExplorerTx(txid: string) {
+    chrome.tabs.create({ url: explorerTxUrl(txid) });
+  }
+  function openExplorerBlock(cycle: number) {
+    chrome.tabs.create({ url: explorerBlockUrl(cycle) });
+  }
 
   useEffect(() => {
     if (!addressHex) {
@@ -671,6 +715,12 @@ export function PopupApp() {
             <div style={{ fontWeight: 700 }}>Transactions</div>
             <div className="small">Local receipt polling.</div>
             <div className="spacer" />
+            <div className="row" style={{ justifyContent: "flex-end" }}>
+              <button className="secondary" onClick={() => wipeLocalHistory().catch(() => {})} disabled={!addressHex}>
+                Wipe history
+              </button>
+            </div>
+            <div className="spacer" />
             {txs.length === 0 ? (
               <div className="small">No transactions yet.</div>
             ) : (
@@ -678,7 +728,15 @@ export function PopupApp() {
                 {txs.map((t) => (
                   <div key={t.localTxId} className="kv" style={{ gridTemplateColumns: "110px 1fr" }}>
                     <div className="k">tx</div>
-                    <div className="v">{shortHex(t.rpcTxId ?? t.localTxId, 14, 10)}</div>
+                    <div className="row">
+                      <span className="v">{shortHex(t.rpcTxId ?? t.localTxId, 14, 10)}</span>
+                      <button className="secondary miniBtn" onClick={() => copyText(t.rpcTxId ?? t.localTxId)}>
+                        Copy
+                      </button>
+                      <button className="secondary miniBtn" onClick={() => openExplorerTx(t.rpcTxId ?? t.localTxId)}>
+                        Explorer
+                      </button>
+                    </div>
                     <div className="k">status</div>
                     <div className="v">{t.status ?? "—"}</div>
                   </div>

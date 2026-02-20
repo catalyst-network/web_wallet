@@ -146,6 +146,10 @@ button.danger {
 .spacer {
   height: 10px;
 }
+.miniBtn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
 
 .qrWrap {
   display: grid;

@@ -37,6 +37,18 @@ type UiTx = {
 
 const LS_VAULT = "catalyst_wallet_vault_v1";
 const LS_RPC_URL = "catalyst_wallet_rpc_url";
+const LS_TXS_PREFIX = "catalyst_wallet_txs_v1";
+const LS_CHAIN_HISTORY_PREFIX = "catalyst_wallet_chain_history_v1";
+
+const EXPLORER_BASE_URL = "https://explorer.catalystnet.org";
+
+function explorerTxUrl(txid: string): string {
+  // Explorer is expected to route tx pages by hash.
+  return `${EXPLORER_BASE_URL}/tx/${txid}`;
+}
+function explorerBlockUrl(cycle: number): string {
+  return `${EXPLORER_BASE_URL}/block/${cycle}`;
+}
 
 function readVault(): VaultRecordV1 | null {
   const raw = localStorage.getItem(LS_VAULT);
@@ -50,6 +62,19 @@ function readVault(): VaultRecordV1 | null {
 
 function writeVault(v: VaultRecordV1) {
   localStorage.setItem(LS_VAULT, JSON.stringify(v));
+}
+
+function readJson<T>(key: string): T | null {
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+function writeJson(key: string, value: unknown) {
+  localStorage.setItem(key, JSON.stringify(value));
 }
 
 function bytesToUtf8(b: Uint8Array): string {
@@ -163,6 +188,39 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(LS_RPC_URL, rpcBaseUrl);
   }, [rpcBaseUrl]);
+
+  const txsStorageKey = useMemo(() => {
+    if (!addressHex) return null;
+    return `${LS_TXS_PREFIX}:${CATALYST_TESTNET.networkId}:${addressHex.toLowerCase()}`;
+  }, [addressHex]);
+  const chainHistoryStorageKey = useMemo(() => {
+    if (!addressHex) return null;
+    return `${LS_CHAIN_HISTORY_PREFIX}:${CATALYST_TESTNET.networkId}:${addressHex.toLowerCase()}`;
+  }, [addressHex]);
+
+  useEffect(() => {
+    if (!addressHex) return;
+    // Restore persisted local tx list + last fetched on-chain history for this address.
+    const stx = txsStorageKey ? readJson<UiTx[]>(txsStorageKey) : null;
+    if (Array.isArray(stx)) setTxs(stx);
+    const sh = chainHistoryStorageKey
+      ? readJson<import("@catalyst/catalyst-sdk").RpcTransactionSummary[]>(chainHistoryStorageKey)
+      : null;
+    if (Array.isArray(sh)) setHistory(sh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addressHex]);
+
+  useEffect(() => {
+    if (!txsStorageKey) return;
+    // Keep persisted tx list bounded.
+    const bounded = txs.slice(0, 50);
+    writeJson(txsStorageKey, bounded);
+  }, [txs, txsStorageKey]);
+
+  useEffect(() => {
+    if (!chainHistoryStorageKey) return;
+    writeJson(chainHistoryStorageKey, history.slice(0, 50));
+  }, [history, chainHistoryStorageKey]);
 
   useEffect(() => {
     // reset chain state on rpc changes
@@ -396,6 +454,18 @@ export function App() {
     }
   }
 
+  function wipeLocalHistory() {
+    if (!txsStorageKey || !chainHistoryStorageKey) return;
+    localStorage.removeItem(txsStorageKey);
+    localStorage.removeItem(chainHistoryStorageKey);
+    setTxs([]);
+    setHistory([]);
+  }
+
+  function openExplorerTx(txid: string) {
+    window.open(explorerTxUrl(txid), "_blank", "noopener,noreferrer");
+  }
+
   function renderHistoryItem(h: import("@catalyst/catalyst-sdk").RpcTransactionSummary) {
     const me = (addressHex ?? "").toLowerCase();
     const from = (h.from ?? "").toString();
@@ -450,6 +520,9 @@ export function App() {
           <span className="v" title={h.hash}>{shortHex(h.hash, 14, 10)}</span>
           <button className="secondary miniBtn" onClick={() => copyToClipboard(h.hash)}>
             Copy
+          </button>
+          <button className="secondary miniBtn" onClick={() => openExplorerTx(h.hash)}>
+            Explorer
           </button>
         </div>
       </div>
@@ -1175,9 +1248,14 @@ export function App() {
             <div className="spacer" />
             <div className="row" style={{ justifyContent: "space-between" }}>
               <div className="small">Recent on-chain activity (by address)</div>
-              <button className="secondary" onClick={() => refreshHistory()} disabled={historyBusy}>
-                {historyBusy ? "Loading…" : "Refresh history"}
-              </button>
+              <div className="row">
+                <button className="secondary" onClick={() => refreshHistory()} disabled={historyBusy}>
+                  {historyBusy ? "Loading…" : "Refresh history"}
+                </button>
+                <button className="secondary" onClick={() => wipeLocalHistory()} disabled={!addressHex}>
+                  Wipe history
+                </button>
+              </div>
             </div>
             {historyError ? <div className="error">{historyError}</div> : null}
             <div className="card" style={{ marginTop: 10, padding: "10px 14px" }}>
@@ -1198,7 +1276,15 @@ export function App() {
                 {txs.map((t) => (
                   <div key={t.localTxId} className="kv" style={{ gridTemplateColumns: "160px 1fr" }}>
                     <div className="k">tx_id</div>
-                    <div className="v">{t.rpcTxId ?? t.localTxId}</div>
+                    <div className="row">
+                      <span className="v">{t.rpcTxId ?? t.localTxId}</span>
+                      <button className="secondary miniBtn" onClick={() => copyToClipboard(t.rpcTxId ?? t.localTxId)}>
+                        Copy
+                      </button>
+                      <button className="secondary miniBtn" onClick={() => openExplorerTx(t.rpcTxId ?? t.localTxId)}>
+                        Explorer
+                      </button>
+                    </div>
                     <div className="k">status</div>
                     <div className="v">
                       {t.status ?? "—"}{" "}
