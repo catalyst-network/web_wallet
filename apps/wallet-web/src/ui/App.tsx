@@ -1163,7 +1163,7 @@ export function App() {
               value={revealPassword}
               onChange={(e) => setRevealPassword(e.target.value)}
               placeholder="Password"
-              style={{ width: "100%" }}
+              style={{ width: "100%", maxWidth: 420 }}
             />
             <div className="spacer" />
             <div className="row">
