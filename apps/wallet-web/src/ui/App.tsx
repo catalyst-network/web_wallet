@@ -131,6 +131,7 @@ export function App() {
   const [walletData, setWalletData] = useState<WalletDataV2 | null>(null);
 
   const [password, setPassword] = useState("");
+  const unlockBtnRef = useRef<HTMLButtonElement | null>(null);
   const [addressHex, setAddressHex] = useState<`0x${string}` | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [privkeyHex, setPrivkeyHex] = useState<`0x${string}` | null>(null);
@@ -919,11 +920,18 @@ export function App() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Tab" && !e.shiftKey) {
+                      e.preventDefault();
+                      unlockBtnRef.current?.focus();
+                    }
+                  }}
                   placeholder="Password"
                   style={{ width: "100%" }}
                 />
                 <div className="spacer" />
                 <button
+                  ref={unlockBtnRef}
                   onClick={() =>
                     unlock().catch((e) => setChainError(e instanceof Error ? e.message : String(e)))
                   }

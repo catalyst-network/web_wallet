@@ -117,6 +117,7 @@ export function PopupApp() {
 
   // Account/session
   const [password, setPassword] = useState("");
+  const unlockBtnRef = useRef<HTMLButtonElement | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [addressHex, setAddressHex] = useState<`0x${string}` | null>(null);
   const [privkeyHex, setPrivkeyHex] = useState<`0x${string}` | null>(null);
@@ -534,9 +535,26 @@ export function PopupApp() {
             <div className="spacer" />
             {vault ? (
               <>
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" style={{ width: "100%" }} />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Tab" && !e.shiftKey) {
+                      e.preventDefault();
+                      unlockBtnRef.current?.focus();
+                    }
+                  }}
+                  placeholder="Password"
+                  style={{ width: "100%" }}
+                />
                 <div className="spacer" />
-                <button onClick={() => unlock().catch((e) => setOnboardError(e instanceof Error ? e.message : String(e)))}>Unlock</button>
+                <button
+                  ref={unlockBtnRef}
+                  onClick={() => unlock().catch((e) => setOnboardError(e instanceof Error ? e.message : String(e)))}
+                >
+                  Unlock
+                </button>
               </>
             ) : (
               <div className="small">No vault yet. Create or restore one.</div>
