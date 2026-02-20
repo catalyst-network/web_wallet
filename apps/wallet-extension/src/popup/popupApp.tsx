@@ -518,7 +518,7 @@ export function PopupApp() {
           <input
             value={rpcBaseUrl}
             onChange={(e) => setRpcBaseUrl(e.target.value)}
-            style={{ width: 260 }}
+            style={{ width: "min(340px, 70vw)", flex: 1, minWidth: 220 }}
             placeholder={CATALYST_TESTNET.rpcUrls[0]}
           />
         </div>

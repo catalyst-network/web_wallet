@@ -890,7 +890,7 @@ export function App() {
         </div>
         <div className="row">
           <input
-            style={{ width: 340 }}
+            style={{ width: "min(520px, 55vw)", flex: 1, minWidth: 220 }}
             value={rpcBaseUrl}
             onChange={(e) => setRpcBaseUrl(e.target.value)}
             placeholder='RPC URL (e.g. https://testnet-eu-rpc.catalystnet.org or "/rpc" in dev)'

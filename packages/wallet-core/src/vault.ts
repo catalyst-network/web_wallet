@@ -81,6 +81,14 @@ export function openVaultV1(args: { password: string; record: VaultRecordV1 }): 
     dkLen: 32,
   });
   const aead = xchacha20poly1305(key, nonce);
-  return aead.decrypt(ciphertext);
+  try {
+    return aead.decrypt(ciphertext);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.toLowerCase().includes("invalid tag")) {
+      throw new Error("Incorrect password (or vault is corrupted).");
+    }
+    throw e;
+  }
 }
 
