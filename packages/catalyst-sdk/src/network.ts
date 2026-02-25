@@ -13,7 +13,7 @@ export const CATALYST_TESTNET: CatalystNetworkConfig = {
   networkId: "catalyst-testnet",
   chainId: 200820092n,
   genesisHashHex:
-    "0xeea16848e6b1d39d6b7a5e094ad9189d5382a6a4b19fb95342ef9846258fee5a",
+    "0x32bceec02712a1184f788ce4aebf3472e98be2f09ffd5e356148e13a01f7ea9d",
   rpcUrls: [
     "https://testnet-eu-rpc.catalystnet.org",
     "https://testnet-us-rpc.catalystnet.org",

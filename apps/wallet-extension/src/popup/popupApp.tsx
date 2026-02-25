@@ -4,7 +4,7 @@ import {
   CatalystRpcClient,
   assertChainIdentity,
   RpcTimeoutError,
-  buildAndSignTransferTxV1,
+  buildAndSignTransferTxV2,
   normalizeHex32,
 } from "@catalyst/catalyst-sdk";
 import QRCode from "qrcode";
@@ -426,13 +426,12 @@ export function PopupApp() {
       if (bal < required) throw new Error(`Insufficient balance: have=${bal} need=${required} (includes fees)`);
 
       const nonceToUse = await allocateNonce(addressHex);
-      const built = buildAndSignTransferTxV1({
+      const built = buildAndSignTransferTxV2({
         privkeyHex,
         toPubkeyHex: to,
         amount,
         noncePlusOne: nonceToUse,
         fees,
-        lockTimeSeconds: nowSecondsU32(),
         timestampMs: nowMs(),
         chainId: CATALYST_TESTNET.chainId,
         genesisHashHex: CATALYST_TESTNET.genesisHashHex,

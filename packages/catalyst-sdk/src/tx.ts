@@ -28,6 +28,16 @@ export type Transaction = {
 
 const TX_WIRE_MAGIC_V1 = new TextEncoder().encode("CTX1");
 const TX_SIG_DOMAIN_V1 = new TextEncoder().encode("CATALYST_SIG_V1");
+const TX_WIRE_MAGIC_V2 = new TextEncoder().encode("CTX2");
+const TX_SIG_DOMAIN_V2 = new TextEncoder().encode("CATALYST_SIG_V2");
+
+export type TransactionV2 = {
+  core: TransactionCore;
+  signatureScheme: number; // u8 (currently only 0 supported)
+  signature: Uint8Array; // 64 bytes (Schnorr)
+  senderPubkey: null | Uint8Array; // Option<Vec<u8>>; must be null for now
+  timestamp: bigint; // u64 ms
+};
 
 function txTypeTag(t: TransactionType): number {
   switch (t) {
@@ -60,6 +70,20 @@ export function serializeCoreV1(core: TransactionCore): Uint8Array {
   );
 }
 
+export function serializeCoreV2(core: TransactionCore): Uint8Array {
+  // For v2, canonical encoding is the same field order; allow larger data blobs (bounded by node caps).
+  if (core.data.length > 64 * 1024) throw new Error("core.data too large");
+  const entriesBytes = core.entries.map(serializeEntry);
+  return concatBytes(
+    u8(txTypeTag(core.txType)),
+    vec(entriesBytes),
+    u64le(core.nonce),
+    u32le(core.lockTime),
+    u64le(core.fees),
+    bytesVec(core.data),
+  );
+}
+
 export function serializeTxV1(tx: Transaction): Uint8Array {
   if (tx.signature.length !== 64) throw new Error("signature must be 64 bytes");
   return concatBytes(
@@ -69,13 +93,42 @@ export function serializeTxV1(tx: Transaction): Uint8Array {
   );
 }
 
+function optionBytesVec(v: null | Uint8Array): Uint8Array {
+  if (v === null) return u8(0x00);
+  return concatBytes(u8(0x01), bytesVec(v));
+}
+
+export function serializeTxV2(tx: TransactionV2): Uint8Array {
+  if (tx.signatureScheme !== 0) throw new Error("unsupported signature_scheme (only 0 allowed)");
+  if (tx.senderPubkey !== null) throw new Error("sender_pubkey must be null (reserved for future schemes)");
+  if (tx.signature.length !== 64) throw new Error("signature must be 64 bytes");
+  return concatBytes(
+    serializeCoreV2(tx.core),
+    u8(tx.signatureScheme),
+    bytesVec(tx.signature),
+    optionBytesVec(tx.senderPubkey),
+    u64le(tx.timestamp),
+  );
+}
+
 export function encodeWireTxV1(tx: Transaction): Uint8Array {
   return concatBytes(TX_WIRE_MAGIC_V1, serializeTxV1(tx));
+}
+
+export function encodeWireTxV2(tx: TransactionV2): Uint8Array {
+  return concatBytes(TX_WIRE_MAGIC_V2, serializeTxV2(tx));
 }
 
 export function txIdV1(tx: Transaction): `0x${string}` {
   const wire = encodeWireTxV1(tx);
   const digest64 = blake2b(wire, { dkLen: 64 });
+  const id = digest64.slice(0, 32);
+  return bytesToHex(id);
+}
+
+export function txIdV2(tx: TransactionV2): `0x${string}` {
+  const txBytes = serializeTxV2(tx);
+  const digest64 = blake2b(concatBytes(TX_WIRE_MAGIC_V2, txBytes), { dkLen: 64 });
   const id = digest64.slice(0, 32);
   return bytesToHex(id);
 }
@@ -92,6 +145,29 @@ export function signingPayloadV1(args: {
     TX_SIG_DOMAIN_V1,
     u64le(args.chainId),
     genesis,
+    coreBytes,
+    u64le(args.timestamp),
+  );
+}
+
+export function signingPayloadV2(args: {
+  core: TransactionCore;
+  timestamp: bigint;
+  chainId: bigint;
+  genesisHashHex: `0x${string}`;
+  signatureScheme: number; // u8
+  senderPubkey: null | Uint8Array; // must be null for now
+}): Uint8Array {
+  if (args.signatureScheme !== 0) throw new Error("unsupported signature_scheme (only 0 allowed)");
+  if (args.senderPubkey !== null) throw new Error("sender_pubkey must be null (reserved for future schemes)");
+  const genesis = hexToBytes(normalizeHex32(args.genesisHashHex));
+  const coreBytes = serializeCoreV2(args.core);
+  return concatBytes(
+    TX_SIG_DOMAIN_V2,
+    u64le(args.chainId),
+    genesis,
+    u8(args.signatureScheme),
+    optionBytesVec(args.senderPubkey),
     coreBytes,
     u64le(args.timestamp),
   );
@@ -182,6 +258,62 @@ export function buildAndSignTransferTxV1(args: {
     tx,
     wireHex: bytesToHex(wire),
     txIdHex: txIdV1(tx),
+  };
+}
+
+export function buildAndSignTransferTxV2(args: {
+  privkeyHex: string;
+  toPubkeyHex: `0x${string}`;
+  amount: bigint;
+  noncePlusOne: bigint;
+  fees: bigint;
+  timestampMs: bigint;
+  chainId: bigint;
+  genesisHashHex: `0x${string}`;
+}): {
+  fromPubkeyHex: `0x${string}`;
+  tx: TransactionV2;
+  wireHex: `0x${string}`;
+  txIdHex: `0x${string}`;
+} {
+  const fromPubkeyHex = pubkeyFromPrivkeyHex(args.privkeyHex);
+  const core: TransactionCore = {
+    txType: "NonConfidentialTransfer",
+    nonce: args.noncePlusOne,
+    lockTime: 0,
+    fees: args.fees,
+    data: new Uint8Array(),
+    entries: [
+      { publicKeyHex: fromPubkeyHex, amount: -args.amount },
+      { publicKeyHex: normalizeHex32(args.toPubkeyHex), amount: args.amount },
+    ],
+  };
+
+  const payload = signingPayloadV2({
+    core,
+    timestamp: args.timestampMs,
+    chainId: args.chainId,
+    genesisHashHex: args.genesisHashHex,
+    signatureScheme: 0,
+    senderPubkey: null,
+  });
+
+  const sig = signSchnorrRistretto({ privkeyHex: args.privkeyHex, message: payload });
+
+  const tx: TransactionV2 = {
+    core,
+    signatureScheme: 0,
+    signature: sig,
+    senderPubkey: null,
+    timestamp: args.timestampMs,
+  };
+
+  const wire = encodeWireTxV2(tx);
+  return {
+    fromPubkeyHex,
+    tx,
+    wireHex: bytesToHex(wire),
+    txIdHex: txIdV2(tx),
   };
 }
 

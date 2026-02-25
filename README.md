@@ -12,7 +12,7 @@ Greenfield wallet implementation for **Catalyst testnet** (`catalyst-testnet`) f
 
 - `network_id`: `catalyst-testnet`
 - `chain_id`: `200820092` (`0xbf8457c`)
-- `genesis_hash`: `0xeea16848e6b1d39d6b7a5e094ad9189d5382a6a4b19fb95342ef9846258fee5a`
+- `genesis_hash`: `0x32bceec02712a1184f788ce4aebf3472e98be2f09ffd5e356148e13a01f7ea9d`
 - `RPC_URL` (default EU + failover):
   - `https://testnet-eu-rpc.catalystnet.org`
   - `https://testnet-us-rpc.catalystnet.org`
