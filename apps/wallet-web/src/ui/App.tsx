@@ -5,7 +5,7 @@ import {
   CATALYST_TESTNET_DEV_FAUCET_PRIVKEY_HEX,
   assertChainIdentity,
   RpcTimeoutError,
-  buildAndSignTransferTxV1,
+  buildAndSignTransferTxV2,
   normalizeHex32,
   pubkeyFromPrivkeyHex,
 } from "@catalyst/catalyst-sdk";
@@ -680,13 +680,12 @@ export function App() {
       // Allocate a unique nonce for this send (committed_nonce+1, +2, +3, ...)
       const nonceToUse = await allocateNonce(addressHex);
 
-      const built = buildAndSignTransferTxV1({
+      const built = buildAndSignTransferTxV2({
         privkeyHex,
         toPubkeyHex: to,
         amount,
         noncePlusOne: nonceToUse,
         fees,
-        lockTimeSeconds: nowSecondsU32(),
         timestampMs: nowMs(),
         chainId: CATALYST_TESTNET.chainId,
         genesisHashHex: CATALYST_TESTNET.genesisHashHex,
@@ -762,13 +761,12 @@ export function App() {
           const committed = await rpc.getNonce(faucetAddressHex);
           bumpNextNonceFloor(faucetAddressHex, committed);
           const faucetNonceToUse = await allocateNonce(faucetAddressHex);
-          const built = buildAndSignTransferTxV1({
+          const built = buildAndSignTransferTxV2({
             privkeyHex: CATALYST_TESTNET_DEV_FAUCET_PRIVKEY_HEX,
             toPubkeyHex: addressHex,
             amount,
             noncePlusOne: faucetNonceToUse,
             fees,
-            lockTimeSeconds: nowSecondsU32(),
             timestampMs: nowMs(),
             chainId: CATALYST_TESTNET.chainId,
             genesisHashHex: CATALYST_TESTNET.genesisHashHex,
@@ -1208,7 +1206,7 @@ export function App() {
           </div>
 
           <div className="card">
-            <div style={{ fontWeight: 700 }}>Send transfer (v1)</div>
+            <div style={{ fontWeight: 700 }}>Send transfer (v2)</div>
             <div className="small">NonConfidentialTransfer entries sum to 0; fees are set in core.fees.</div>
             <div className="spacer" />
             <input value={toHex} onChange={(e) => setToHex(e.target.value)} placeholder="To address (0x + 64 hex)" style={{ width: "100%" }} />

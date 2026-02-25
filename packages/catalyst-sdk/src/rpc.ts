@@ -46,6 +46,10 @@ function isAbortError(e: unknown): boolean {
   return e instanceof DOMException && e.name === "AbortError";
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export type RpcTransactionRequest = {
   from: string;
   to: string;
@@ -116,6 +120,17 @@ export class CatalystRpcClient {
     return false;
   }
 
+  private backoffDelayMs(attempt: number, err: unknown): number {
+    // Conservative client-side backoff to reduce rate-limit pressure.
+    // attempt is 0-based per failing try within a single call().
+    const isRateLimited = err instanceof RpcHttpError && err.status === 429;
+    const base = isRateLimited ? 400 : 200;
+    const cap = isRateLimited ? 5_000 : 2_000;
+    const exp = Math.min(cap, base * 2 ** Math.min(6, attempt));
+    const jitter = Math.floor(Math.random() * 120); // small jitter to de-sync clients
+    return exp + jitter;
+  }
+
   private async fetchRpc<T>(url: string, req: JsonRpcRequest, timeoutMs: number): Promise<T> {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(new RpcTimeoutError(`RPC timeout after ${timeoutMs}ms`)), timeoutMs);
@@ -159,6 +174,7 @@ export class CatalystRpcClient {
 
     let lastErr: unknown = null;
     const idxs = allowFailover ? this.orderedIndexesForAttempt() : [this.lastGoodIndex];
+    let attempt = 0;
     for (const idx of idxs) {
       const url = this.urls[idx]!;
       try {
@@ -168,7 +184,8 @@ export class CatalystRpcClient {
       } catch (e) {
         lastErr = e;
         if (!allowFailover || !this.shouldFailover(e)) break;
-        // try next endpoint
+        // Backoff (rate limits / transient failures), then try next endpoint.
+        await sleep(this.backoffDelayMs(attempt++, e));
       }
     }
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
@@ -194,8 +211,9 @@ export class CatalystRpcClient {
   }
 
   async getNonce(addressHex32: string): Promise<bigint> {
-    const n = await this.call<number>("catalyst_getNonce", [addressHex32]);
-    return BigInt(n);
+    const n = await this.call<number | string>("catalyst_getNonce", [addressHex32]);
+    // Accept either JSON number or string (u64 may exceed JS safe integer range).
+    return typeof n === "string" ? BigInt(n) : BigInt(n);
   }
 
   async estimateFee(req: RpcTransactionRequest): Promise<bigint> {
